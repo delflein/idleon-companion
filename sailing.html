@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sailing — IdleOn Companion</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --page: #0d0d0d;
+    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
+    --grid: #2c2c2a; --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #008300; --series-3: #d55181; --series-4: #c98500;
+    --seq-lo: #184f95; --seq-hi: #3987e5;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --seq-lo: #86b6ef; --seq-hi: #2a78d6;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink-1);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px; line-height: 1.45; padding: 20px; max-width: 1240px; margin: 0 auto;
+  }
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  header h1 { font-size: 21px; font-weight: 650; }
+  header .meta { color: var(--ink-muted); font-size: 12.5px; }
+  header .spacer { flex:1; }
+  nav.pages { display:flex; gap:2px; border:1px solid var(--border); border-radius:10px; padding:2px; }
+  nav.pages a { color:var(--ink-2); text-decoration:none; font-size:12.5px; padding:4px 12px; border-radius:8px; }
+  nav.pages a.here { background:var(--series-1); color:#fff; }
+  nav.pages a:hover:not(.here) { background:var(--grid); }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap:10px; margin-bottom:18px; }
+  .tile { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  .tile .label { color: var(--ink-muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .tile .value { font-size:24px; font-weight:650; margin-top:2px; }
+  .tile .sub { color: var(--ink-2); font-size:12px; margin-top:2px; }
+  section.panel { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:14px; }
+  section.panel h2 { font-size:14.5px; font-weight:650; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; font-size:12.5px; }
+  th { text-align:left; color:var(--ink-muted); font-weight:500; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:0 8px 6px 0; }
+  td { padding:5px 8px 5px 0; border-top:1px solid var(--grid); }
+  .chip { font-size:11px; border:1px solid var(--border); border-radius:6px; padding:1px 6px; color:var(--ink-2); white-space:nowrap; }
+  .chip.dead { color:var(--ink-muted); text-decoration:line-through; opacity:.65; }
+  .chip.good { border-color:var(--good); color:var(--good); }
+  .chip.warn { border-color:var(--warning); color:var(--warning); }
+  .bar-bg { background:var(--grid); border-radius:999px; height:7px; overflow:hidden; }
+  .bar-fill { background:var(--series-1); height:100%; }
+  .note { color:var(--ink-2); font-size:12.5px; }
+  .note b { color:var(--ink-1); }
+  .callout { border-left:3px solid var(--series-1); padding:2px 0 2px 11px; margin:10px 0; color:var(--ink-2); font-size:12.5px; }
+  .callout.warn { border-left-color: var(--warning); }
+  .err { color:var(--critical); }
+  .scroll { overflow-x:auto; }
+  .foot { color:var(--ink-muted); font-size:11.5px; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sailing</h1>
+  <nav class="pages">
+    <a href="dashboard.html">Dashboard</a>
+    <a href="achievements.html">Achievements</a>
+    <a class="here" href="sailing.html">Sailing</a>
+  </nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta">loading…</span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+<section class="panel" id="labPanel" style="display:none"></section>
+<section class="panel" id="shopPanel" style="display:none"></section>
+<section class="panel" id="fleetPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d=2) => Number(n).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+
+/* Chest rarity names + the artifact multiplier per tier.
+ * artiMulti is 1.4^r — verified against in-game chest readings, NOT the 1.7 that
+ * decompile summaries report. See REF.chestTiers in domain.mjs. */
+const CHESTS = [
+  {name:"Basic",   arti:1.0},   {name:"Iron",   arti:1.4},
+  {name:"Gilded",  arti:1.96},  {name:"Noble",  arti:2.744},
+  {name:"Occult",  arti:3.8416},{name:"Miracle",arti:30},
+];
+const STAT_NAMES = ["Boat Speed","Loot Value","Cloud Discover","Artifact Find","Rare Chest"];
+/* perChest = moves a chest's artifact odds. Everything else is dead weight for an
+ * account that has all islands unlocked and is clamped at min travel time. */
+const PER_CHEST = [false,false,false,true,true];
+const THROUGHPUT = [true,false,false,false,false];
+
+function tile(label, value, sub) {
+  return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
+}
+
+function statChip(s) {
+  const cls = PER_CHEST[s.id] ? "chip good" : (THROUGHPUT[s.id] ? "chip warn" : "chip dead");
+  const suffix = PER_CHEST[s.id] ? "" : (THROUGHPUT[s.id] ? " · speed" : "");
+  return `<span class="${cls}">${STAT_NAMES[s.id]} +${s.raw}${suffix}</span>`;
+}
+
+function render(snap) {
+  const s = snap.entities?.sailing;
+  const arts = snap.entities?.artifacts || [];
+  if (!s) {
+    $("err").innerHTML = `This snapshot has no <code>sailing</code> entity — it was stored before the sailing parser existed.
+      Run <b>POST /api/rebuild</b> to backfill every stored snapshot from its raw save, then reload.`;
+    return;
+  }
+  $("meta").textContent = new Date(snap.ts).toLocaleString();
+
+  const maxed = s.artifactsMaxed, total = maxed + s.artifactsRemaining;
+  const labFired = s.artifactsRemaining === 0;
+
+  $("tiles").innerHTML = [
+    tile("Banked sailing", fmt(s.bankedHours,2)+" h", "OptLacc[124] — advances every boat on claim"),
+    tile("Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "chests waiting"),
+    tile("Artifacts maxed", maxed+" / "+total, s.artifactsRemaining+" still below Transcendent"),
+    tile("Rare Chest boats", s.boatsWithRareChest+" / "+s.boats.length, s.boatsDeadForArtifacts+" boats contribute baseline only"),
+    tile("Fleet chest quality", fmt(s.fleetArtiMulti,2), "sum of E[1.4^rarity] across boats"),
+  ].join("");
+
+  /* --- Lab threshold: the single biggest term in the artifact formula --- */
+  const pct = (maxed/total*100);
+  $("labPanel").style.display = "";
+  $("labPanel").innerHTML = `
+    <h2>Lab · Artifact Attraction <span class="hint">the 667× cliff</span></h2>
+    <div class="note">Currently <b>${labFired ? "1,000×" : "1.5×"}</b> — ${labFired
+      ? `all artifacts are at max rarity, so the bonus has fired.`
+      : `it becomes <b>1,000×</b> only when <b>every</b> artifact is at max rarity. You are <b>${s.artifactsRemaining}</b> away.`}</div>
+    <div style="margin:10px 0 4px"><div class="bar-bg"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div></div>
+    <div class="foot">${maxed} / ${total} at Transcendent · ${pct.toFixed(1)}%</div>
+    <div class="callout warn">It is a <b>threshold, not a curve</b>. The first ${Math.max(0,s.artifactsRemaining-1)} upgrades pay nothing here;
+      the last one flips 1.5× → 1,000× in a single step. Verbatim from the game client:
+      <i>“Artifact find chance is 1.5x higher! If you've found all artifacts at max rarity, then this bonus changes to 1,000x artifact find chance!”</i>
+      Worth knowing: the 667× lands exactly when you have nothing left to find, so it rewards finishing rather than helping you finish.</div>
+    ${s.artifactsRemaining ? `<div class="note" style="margin-top:8px">Still below max: ${
+      arts.filter(a=>a.tier<6).map(a=>`<span class="chip">${a.name} · ${a.tierName}</span>`).join(" ")}</div>` : ""}`;
+
+  /* --- today's rotating captain shop --- */
+  const scoreShop = (c) => c.stats.reduce((t,x)=> t + (PER_CHEST[x.id] ? x.raw : 0), 0);
+  const shop = [...s.shop].map(c => ({...c, score: scoreShop(c)})).sort((a,b)=>b.score-a.score);
+  const best = shop[0];
+  $("shopPanel").style.display = "";
+  $("shopPanel").innerHTML = `
+    <h2>Today's captain shop <span class="hint">4 rolls, refreshes daily</span></h2>
+    <div class="scroll"><table>
+      <tr><th>tier</th><th>lv</th><th>stats</th><th>useful roll</th></tr>
+      ${shop.map(c=>`<tr>
+        <td>${c.tier}</td><td>${c.level}</td>
+        <td>${c.stats.map(statChip).join(" ")}</td>
+        <td>${c.score>0 ? `<b>+${c.score}</b>` : `<span style="color:var(--ink-muted)">—</span>`}</td>
+      </tr>`).join("")}
+    </table></div>
+    ${best && best.score>0
+      ? `<div class="callout">Take the <b>tier ${best.tier}</b> roll (${best.stats.filter(x=>PER_CHEST[x.id]).map(x=>STAT_NAMES[x.id]+" +"+x.raw).join(", ")})
+          and put it on one of your <b>${s.boatsDeadForArtifacts}</b> artifact-dead boats. Even at level 1 it beats their zero, and the stored roll
+          never changes — only <code>level × roll</code> grows, so a good roll at level 1 is already a good captain.</div>`
+      : `<div class="callout warn">Nothing worth buying today — no roll carries Artifact Find or Rare Chest.</div>`}
+    <div class="foot">Scored for <b>this</b> account: all islands unlocked ⇒ Cloud Discover is dead; clamped at min travel time ⇒ Boat Speed is discarded by the game's Math.min. Loot Value is treasure income and never touches artifact odds.</div>`;
+
+  /* --- fleet --- */
+  const boats = [...s.boats].sort((a,b)=>b.eArtiMulti-a.eArtiMulti);
+  const bare = boats[boats.length-1];
+  const potential = boats[0].eArtiMulti * boats.length;
+  $("fleetPanel").style.display = "";
+  $("fleetPanel").innerHTML = `
+    <h2>Fleet <span class="hint">${s.boats.length} boats · island ${s.boats[0]?.island ?? "?"}</span></h2>
+    <div class="callout">Rare Chest is the only captain stat that moves chest rarity — the <code>1.4^rarity</code> exponent on artifact chance.
+      <b>${s.boatsWithRareChest} of ${s.boats.length}</b> boats have it. Bringing every boat to your best captain's chest quality is
+      <b>${fmt(potential/s.fleetArtiMulti,2)}×</b> more artifacts, without touching anything outside sailing.</div>
+    <div class="scroll"><table>
+      <tr><th>boat</th><th>cap</th><th>tier</th><th>lv</th><th>stats</th><th>rare chest</th><th>E[1.4^r]</th><th>basic→noble mix</th></tr>
+      ${boats.map(b=>{
+        const c = s.captains.find(x=>x.i===b.captainIdx) || {tier:"?",level:"?",stats:[]};
+        const mix = b.chestDist.slice(0,4).map((p,r)=>`${CHESTS[r].name[0]}${(p*100).toFixed(0)}`).join(" ");
+        return `<tr>
+          <td>${b.i}</td><td>${b.captainIdx}</td><td>${c.tier}</td><td>${c.level}</td>
+          <td>${(c.stats||[]).map(statChip).join(" ")}</td>
+          <td>${b.rareChest || `<span style="color:var(--ink-muted)">0</span>`}</td>
+          <td>${fmt(b.eArtiMulti,3)}</td>
+          <td style="color:var(--ink-muted)">${mix}</td>
+        </tr>`;
+      }).join("")}
+    </table></div>
+    <div class="foot">E[1.4^r] = expected artifact multiplier from chest rarity. Best boat ${fmt(boats[0].eArtiMulti,3)} vs bare boat ${fmt(bare.eArtiMulti,3)}
+      — a ${fmt(boats[0].eArtiMulti/bare.eArtiMulti,2)}× spread that comes entirely from one captain stat.</div>`;
+}
+
+(async () => {
+  try {
+    const r = await (await fetch("/api/state")).json();
+    if (!r.snapshot) { $("err").textContent = "No snapshot yet — hit Sync on the dashboard first."; return; }
+    render(r.snapshot);
+  } catch (e) { $("err").textContent = "Failed to load /api/state: " + e.message; }
+})();
+</script>
+</body>
+</html>

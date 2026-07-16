@@ -13,3 +13,7 @@ history.js
 # OS / editor
 .DS_Store
 node_modules/
+
+# Game client (LavaFlame2 copyright) — ground-truth formulas, grep-only. NEVER commit.
+N.js
+idleon_index.html
