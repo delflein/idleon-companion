@@ -59,6 +59,50 @@ export const REF = {
   arrowheadBonus: 25,
   fauxoryTuskIdx: 3,    // Fauxory Tusk: the bulk of the additive artifact-find pool
   maxArtifactTier: 6,   // Transcendent
+
+  /* Captain bonus roll bounds, verbatim from the client's CaptainBonuses table:
+   *   [["10","60",..,"+{%_Boat_Speed"], ["30","100",..,"+{%_Loot_Value"],
+   *    ["30","100",..,"+{%_Cloud_Discover_Rate"], ["10","50",..,"+{%_Artifact_Find_Chance"],
+   *    ["10","40",..,"+{%_Rare_Chest_Chance"]]
+   * Roll = floor(0.15 * randInt(min, max * (0.5 + 0.8*tier))). Tier lifts the CEILING only —
+   * the floor is tier-independent, so a T6 can roll min and lose to a T1. */
+  captainRolls: [{min:10,max:60},{min:30,max:100},{min:30,max:100},{min:10,max:50},{min:10,max:40}],
+
+  /* Islands, from the client's IslandInfo (f1 = distance) and IslandInfobox (f2 = artifact count).
+   * Artifacts occupy CONTIGUOUS index ranges: island i owns Sailing[3][offset .. offset+count-1],
+   * where offset = sum of counts of all islands before i (the client's SailzDN loop).
+   * Island 14's count is 1 in the raw table and is raised to 4 by the Ninja EmporiumBonus 34
+   * upgrade; it is encoded as 4 here because without it the counts sum to 38, not 41. */
+  islands: [
+    { i:0,  dist:25,            count:4 }, { i:1,  dist:100,           count:3 },
+    { i:2,  dist:250,           count:2 }, { i:3,  dist:1000,          count:3 },
+    { i:4,  dist:3000,          count:3 }, { i:5,  dist:10000,         count:2 },
+    { i:6,  dist:25000,         count:2 }, { i:7,  dist:100000,        count:2 },
+    { i:8,  dist:300000,        count:1 }, { i:9,  dist:1000000,       count:2 },
+    { i:10, dist:2000000,       count:1 }, { i:11, dist:5000000,       count:1 },
+    { i:12, dist:15000000,      count:1 }, { i:13, dist:40000000,      count:2 },
+    { i:14, dist:100000000,     count:4 }, { i:15, dist:5000000000,    count:4 },
+    { i:16, dist:200000000000,  count:4 },
+  ],
+
+  /* Server vars feeding the chance divisors. Not in the save — they arrive via
+   * getServerVarLoad() (Firebase remote config), so these are CALIBRATED, not read:
+   * Dominik's island-13 basic chest reads 1-in-14,933 at a BoatArtiMulti of 2.182e7,
+   * which pins TranscendentChances(13) at ~3.26e11. AncientOddPerIsland is assumed 960
+   * (the client divides by 960, so that is its natural unit) and ArtiPCT solved from there.
+   * Absolute "1 in X" therefore inherits this calibration; RATIOS between islands do not. */
+  serverVars: { ancientOddPerIsland: 960, ancientArtiPct: 9900 },
+
+  calibration: {
+    /* The additive pool inside BoatArtiMulti, EXCLUDING the boat's own captain — the client
+     * sums Fauxory(~19%/sailing LV) + shinies + arcade(32,66) + FractalIsland + bribe 34 +
+     * NONdummies[60] + Holes B_UPG 55 + sticker 2 + research grid 109 + vault 63, all /100.
+     * Derived, not computed: Dominik's two basic-chest readings (1-in-14,933 vs 1-in-12,396
+     * = 1.2047) against his best stat-3 captain (684) solve to ~3242%. It assumes the 12,396
+     * chest came from that captain's boat, so treat it as approximate and account-specific.
+     * TODO: evaluate the client's additive list directly and delete this. */
+    additivePoolPct: 3242,
+  },
   equinoxUpgrades: ["Equinox Dreams","Equinox Resources","Shades of K","Liquidvestment","Matching Scims","Slow Roast Wiz","Laboratory Fuse","Metal Detector","Faux Jewels","Food Lust","Equinox Symbols","Voter Rights","Nonstop Studies","Hmm..."],
   dreamTotal: 77, mealCount: 74, mealCapMax: 160,
   grimoireCount: 55, compassCount: 173, tessCount: 63, vaultCount: 90,
@@ -95,6 +139,36 @@ export function chestDist(rareChestBonus, arrowheadBonus = 0) {
 
 /** Expected artifact multiplier (the 1.4^r term) for a chest-rarity distribution. */
 export const eArtiMulti = (dist) => dist.reduce((s, p, r) => s + p * REF.chestTiers[r].artiMulti, 0);
+
+/** Index of the first artifact belonging to island i (the client's SailzDN accumulator). */
+export const islandOffset = (i) => REF.islands.slice(0, i).reduce((s, x) => s + x.count, 0);
+
+/** Divisor for a tier-5 -> 6 (Transcendent) find on island b. Verbatim from the client:
+ *   6>b ? 4E7+6E7*b
+ *       : 1E6*(1+100*(b-5)/100)*max(1,1.7^max(0,b-7))*(1+50*max(0,b-9)/100)
+ *         * ((1E4+5E3*(b-5)*(AncientOddPerIsland/960)) / (1+AncientArtiPCT/100))
+ * Lower is better. The 1.7^(b-7) term is why far islands are worse despite holding more
+ * artifacts: rolls grow linearly with artifact count, the divisor grows exponentially.
+ * TODO: Ancient/Eldritch/Sovereign/Omnipotent divisors exist in the client too — needed
+ * before this serves an account that is not already at tier 5 everywhere. */
+export function transcendentChances(b, sv = REF.serverVars) {
+  if (b < 6) return 4e7 + 6e7 * b;
+  return 1e6 * (1 + 100 * (b - 5) / 100)
+       * Math.max(1, Math.pow(1.7, Math.max(0, b - 7)))
+       * (1 + 50 * Math.max(0, b - 9) / 100)
+       * ((1e4 + 5e3 * (b - 5) * (sv.ancientOddPerIsland / 960)) / (1 + sv.ancientArtiPct / 100));
+}
+
+/** Chance that ONE chest yields at least one artifact on island `isl`.
+ * The client rolls every un-maxed artifact on the island independently:
+ *   SailzDN2 = prod(1 - chest[2]/TierChances(island));  shown = 100*(1 - SailzDN2)
+ * so `artiMulti` (the chest's frozen BoatArtiMulti * 1.4^rarity) is shared across rolls
+ * and only the COUNT of un-maxed artifacts varies. */
+export function chestArtifactChance(artiMulti, isl, unmaxedCount) {
+  if (!unmaxedCount) return 0;
+  const p = artiMulti / transcendentChances(isl);
+  return Math.min(1, 1 - Math.pow(1 - p, unmaxedCount));
+}
 
 /** Sailing: captains, boats, banked time, per-boat chest quality.
  * NOT parsed, because it is not in the save: the Minimum Chest filter. The
@@ -136,12 +210,40 @@ function extractSailing(P, sail, art) {
     };
   });
 
+  // per-island rollup: which islands still hold un-maxed artifacts, and how many rolls each chest gets there
+  const islands = REF.islands.map((isl) => {
+    const off = islandOffset(isl.i);
+    const arts = Array.from({ length: isl.count }, (_, k) => ({
+      i: off + k, name: REF.artifacts[off + k] ?? "?", tier: art[off + k] || 0,
+    }));
+    const unmaxed = arts.filter((a) => a.tier < REF.maxArtifactTier).length;
+    return { ...isl, offset: off, artifacts: arts, unmaxed, divisor: transcendentChances(isl.i) };
+  });
+
   const banked = opt[124] || 0;
   const maxed = art.filter((t) => t >= REF.maxArtifactTier).length;
+  const remaining = REF.artifacts.length - maxed;
+
+  /* Which captain stats are worth anything depends on the account's phase, not on constants:
+   *   speed    — still distance-bound, so Boat Speed buys real trips/hour
+   *   artifact — clamped at min travel time, artifacts still outstanding: Artifact Find + Rare Chest
+   *   loot     — every artifact maxed, so artifact-find is dead and Loot Value is all that's left
+   *              (levels the ships, which is the only thing still moving)
+   * Cloud Discover is never worth a slot: islands unlock quickly and then the captain is dead
+   * weight forever — community guides say skip it even before that.
+   * `clamped` is supplied by the caller until min-travel-time is computed from the client formula. */
+  const phase = remaining === 0 ? "loot" : "artifact";
+
   return {
     bankedSeconds: banked,
     bankedHours: banked / 3600,
     arrowheadBonus: arrowhead,
+    islands,
+    phase,
+    /* additivePoolPct excludes the boat's own captain, so a boat's multiplier relative to a
+     * captain-less boat is (100 + pool + capArtifactFind) / (100 + pool). Lets the UI turn the
+     * one number the game shows into a real per-boat "1 in X". */
+    additivePoolPct: REF.calibration.additivePoolPct,
     captains: captains.filter((c) => c && !c.isShop),
     shop: captains.filter((c) => c && c.isShop),
     boats,

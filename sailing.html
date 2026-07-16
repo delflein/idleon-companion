@@ -11,9 +11,7 @@
     --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
     --grid: #2c2c2a; --baseline: #383835;
     --border: rgba(255,255,255,0.10);
-    --series-1: #3987e5; --series-2: #008300; --series-3: #d55181; --series-4: #c98500;
-    --seq-lo: #184f95; --seq-hi: #3987e5;
-    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --series-1: #3987e5; --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
   }
   :root[data-theme="light"] {
     color-scheme: light;
@@ -21,7 +19,7 @@
     --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
     --grid: #e1e0d9; --baseline: #c3c2b7;
     --border: rgba(11,11,11,0.10);
-    --series-1: #2a78d6; --seq-lo: #86b6ef; --seq-hi: #2a78d6;
+    --series-1: #2a78d6;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
@@ -37,28 +35,30 @@
   nav.pages a { color:var(--ink-2); text-decoration:none; font-size:12.5px; padding:4px 12px; border-radius:8px; }
   nav.pages a.here { background:var(--series-1); color:#fff; }
   nav.pages a:hover:not(.here) { background:var(--grid); }
-  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap:10px; margin-bottom:18px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap:10px; margin-bottom:14px; }
   .tile { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
   .tile .label { color: var(--ink-muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
   .tile .value { font-size:24px; font-weight:650; margin-top:2px; }
   .tile .sub { color: var(--ink-2); font-size:12px; margin-top:2px; }
   section.panel { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:14px; }
-  section.panel h2 { font-size:14.5px; font-weight:650; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  section.panel h2 { font-size:14.5px; font-weight:650; margin-bottom:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; }
   table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; font-size:12.5px; }
-  th { text-align:left; color:var(--ink-muted); font-weight:500; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:0 8px 6px 0; }
-  td { padding:5px 8px 5px 0; border-top:1px solid var(--grid); }
-  .chip { font-size:11px; border:1px solid var(--border); border-radius:6px; padding:1px 6px; color:var(--ink-2); white-space:nowrap; }
-  .chip.dead { color:var(--ink-muted); text-decoration:line-through; opacity:.65; }
-  .chip.good { border-color:var(--good); color:var(--good); }
-  .chip.warn { border-color:var(--warning); color:var(--warning); }
-  .note { color:var(--ink-2); font-size:12.5px; }
-  .note b { color:var(--ink-1); }
-  .callout { border-left:3px solid var(--series-1); padding:2px 0 2px 11px; margin:10px 0; color:var(--ink-2); font-size:12.5px; }
-  .callout.warn { border-left-color: var(--warning); }
+  th { text-align:left; color:var(--ink-muted); font-weight:500; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:0 8px 6px 0; white-space:nowrap; }
+  td { padding:5px 8px 5px 0; border-top:1px solid var(--grid); white-space:nowrap; }
+  tr.dim td { color:var(--ink-muted); }
+  tr.pick td { background:rgba(57,135,229,.09); }
+  .chip { font-size:11px; border:1px solid var(--border); border-radius:6px; padding:1px 6px; color:var(--ink-2); }
+  .chip.dead { color:var(--ink-muted); text-decoration:line-through; opacity:.6; }
+  .chip.live { border-color:var(--good); color:var(--good); }
+  .chip.soon { border-color:var(--warning); color:var(--warning); }
+  .rec { border-left:3px solid var(--series-1); padding:3px 0 3px 11px; margin:2px 0 10px; font-size:13px; }
+  .rec.none { border-left-color:var(--baseline); color:var(--ink-muted); }
+  .rec b { color:var(--ink-1); }
+  select { background:var(--page); color:var(--ink-1); border:1px solid var(--border); border-radius:7px; padding:3px 8px; font:inherit; font-size:12.5px; }
   .err { color:var(--critical); }
   .scroll { overflow-x:auto; }
-  .foot { color:var(--ink-muted); font-size:11.5px; margin-top:6px; }
+  .up { color:var(--good); } .down { color:var(--ink-muted); }
 </style>
 </head>
 <body>
@@ -70,116 +70,184 @@
     <a class="here" href="sailing.html">Sailing</a>
   </nav>
   <span class="spacer"></span>
-  <span class="meta" id="meta">loading…</span>
+  <span class="meta" id="meta"></span>
 </header>
 
 <div id="err" class="err"></div>
 <div class="cards" id="tiles"></div>
+<section class="panel" id="islandPanel" style="display:none"></section>
 <section class="panel" id="shopPanel" style="display:none"></section>
 <section class="panel" id="fleetPanel" style="display:none"></section>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const fmt = (n, d=2) => Number(n).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d});
+const int = (n) => Math.round(n).toLocaleString();
+const oneIn = (p) => p > 0 ? "1 in " + int(1/p) : "—";
 
-/* Chest rarity names + the artifact multiplier per tier.
- * artiMulti is 1.4^r — verified against in-game chest readings, NOT the 1.7 that
- * decompile summaries report. See REF.chestTiers in domain.mjs. */
-const CHESTS = [
-  {name:"Basic",   arti:1.0},   {name:"Iron",   arti:1.4},
-  {name:"Gilded",  arti:1.96},  {name:"Noble",  arti:2.744},
-  {name:"Occult",  arti:3.8416},{name:"Miracle",arti:30},
+const CHEST = [
+  {name:"Basic",   arti:1.0},   {name:"Iron",    arti:1.4},
+  {name:"Gilded",  arti:1.96},  {name:"Noble",   arti:2.744},
+  {name:"Occult",  arti:3.8416},{name:"Miracle", arti:30},
 ];
-const STAT_NAMES = ["Boat Speed","Loot Value","Cloud Discover","Artifact Find","Rare Chest"];
-/* perChest = moves a chest's artifact odds. Everything else is dead weight for an
- * account that has all islands unlocked and is clamped at min travel time. */
-const PER_CHEST = [false,false,false,true,true];
-const THROUGHPUT = [true,false,false,false,false];
+const STAT = ["Boat Speed","Loot Value","Cloud Discover","Artifact Find","Rare Chest"];
 
-function tile(label, value, sub) {
-  return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>${sub?`<div class="sub">${sub}</div>`:""}</div>`;
+/* Stat value is phase-dependent, not fixed. The old community ranking
+ * (Boat Speed > Loot Value > Artifact Find > Rare Chest > Cloud) predates Transcended
+ * artifacts and no longer describes the endgame.
+ *   speed    — still distance-bound: Boat Speed buys real trips/hour
+ *   artifact — clamped at min travel time, artifacts outstanding: Rare Chest then Artifact Find
+ *   loot     — everything maxed: artifact-find is dead, Loot Value levels the ships
+ * Cloud Discover is never worth a slot at any phase. */
+const RANK = {
+  speed:    [0, 1, 4, 3, 2],
+  artifact: [4, 3, 1, 0, 2],
+  loot:     [1, 0, 4, 3, 2],
+};
+const LIVE = { speed: [0,1], artifact: [4,3], loot: [1] };
+
+let SNAP = null, ISLAND = null;
+
+function statChip(s, phase) {
+  const live = LIVE[phase].includes(s.id);
+  return `<span class="chip ${live?"live":"dead"}">${STAT[s.id]} +${s.raw}</span>`;
 }
 
-function statChip(s) {
-  const cls = PER_CHEST[s.id] ? "chip good" : (THROUGHPUT[s.id] ? "chip warn" : "chip dead");
-  const suffix = PER_CHEST[s.id] ? "" : (THROUGHPUT[s.id] ? " · speed" : "");
-  return `<span class="${cls}">${STAT_NAMES[s.id]} +${s.raw}${suffix}</span>`;
-}
+/* Chance one chest yields >= 1 artifact: the client rolls each un-maxed artifact on the
+ * island independently against the same frozen chest value. */
+const chanceFor = (multi, isl) =>
+  isl.unmaxed ? Math.min(1, 1 - Math.pow(1 - multi/isl.divisor, isl.unmaxed)) : 0;
 
-function render(snap) {
-  const s = snap.entities?.sailing;
-  if (!s) {
-    $("err").innerHTML = `This snapshot has no <code>sailing</code> entity — it was stored before the sailing parser existed.
-      Run <b>POST /api/rebuild</b> to backfill every stored snapshot from its raw save, then reload.`;
-    return;
-  }
-  $("meta").textContent = new Date(snap.ts).toLocaleString();
+/* A boat's multiplier = the number the game shows (a captain-less boat) scaled by that
+ * boat's own Artifact Find captain roll. */
+const boatMulti = (s, b) => s.baseMulti * (100 + s.additivePoolPct + b.artifactFind) / (100 + s.additivePoolPct);
 
-  const maxed = s.artifactsMaxed, total = maxed + s.artifactsRemaining;
+/* Expected artifacts per chest for a boat on an island, across its rarity distribution. */
+const boatRate = (s, b, isl) =>
+  b.chestDist.reduce((t, p, r) => t + p * chanceFor(boatMulti(s, b) * CHEST[r].arti, isl), 0);
+
+function render() {
+  const s = SNAP.entities?.sailing;
+  if (!s) { $("err").innerHTML = `No <code>sailing</code> entity — run <b>POST /api/rebuild</b>, then reload.`; return; }
+  s.baseMulti = 2182.12e6/100;   // TODO: from the client's ~19-term BoatArtiMulti instead of this reading
+  $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+
+  const cur = s.islands.find(i => i.i === s.boats[0]?.island) || s.islands[0];
+  if (ISLAND === null) ISLAND = cur.i;
+  const sel = s.islands.find(i => i.i === ISLAND);
+  const live = s.islands.filter(i => i.unmaxed > 0);
+  const fleetOn = (isl) => s.boats.reduce((t,b) => t + boatRate(s,b,isl), 0);
 
   $("tiles").innerHTML = [
-    tile("Banked sailing", fmt(s.bankedHours,2)+" h", "OptLacc[124] — advances every boat on claim"),
-    tile("Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "chests waiting"),
-    tile("Artifacts maxed", maxed+" / "+total, s.artifactsRemaining+" still below Transcendent"),
-    tile("Rare Chest boats", s.boatsWithRareChest+" / "+s.boats.length, s.boatsDeadForArtifacts+" boats contribute baseline only"),
-    tile("Fleet chest quality", fmt(s.fleetArtiMulti,2), "sum of E[1.4^rarity] across boats"),
-  ].join("");
+    ["Banked sailing", s.bankedHours.toFixed(2)+" h", "advances every boat on claim"],
+    ["Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "waiting"],
+    ["Artifacts maxed", s.artifactsMaxed+" / "+(s.artifactsMaxed+s.artifactsRemaining), s.artifactsRemaining+" to go"],
+    ["Rare Chest boats", s.boatsWithRareChest+" / "+s.boats.length, s.boatsDeadForArtifacts+" dead for artifacts"],
+  ].map(([l,v,sub]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
 
-  /* --- today's rotating captain shop --- */
-  const scoreShop = (c) => c.stats.reduce((t,x)=> t + (PER_CHEST[x.id] ? x.raw : 0), 0);
-  const shop = [...s.shop].map(c => ({...c, score: scoreShop(c)})).sort((a,b)=>b.score-a.score);
-  const best = shop[0];
-  $("shopPanel").style.display = "";
-  $("shopPanel").innerHTML = `
-    <h2>Today's captain shop <span class="hint">4 rolls, refreshes daily</span></h2>
+  /* islands */
+  const best = [...live].sort((a,b)=> fleetOn(b)-fleetOn(a))[0];
+  $("islandPanel").style.display = "";
+  $("islandPanel").innerHTML = `
+    <h2>Islands <span class="hint">rolls per chest × divisor</span></h2>
+    ${best && best.i !== cur.i
+      ? `<div class="rec">Move all boats to <b>island ${best.i}</b> — <b class="up">${(fleetOn(best)/fleetOn(cur)).toFixed(2)}×</b> your rate on island ${cur.i}.</div>`
+      : `<div class="rec none">Island ${cur.i} is already your best.</div>`}
     <div class="scroll"><table>
-      <tr><th>tier</th><th>lv</th><th>stats</th><th>useful roll</th></tr>
-      ${shop.map(c=>`<tr>
-        <td>${c.tier}</td><td>${c.level}</td>
-        <td>${c.stats.map(statChip).join(" ")}</td>
-        <td>${c.score>0 ? `<b>+${c.score}</b>` : `<span style="color:var(--ink-muted)">—</span>`}</td>
-      </tr>`).join("")}
-    </table></div>
-    ${best && best.score>0
-      ? `<div class="callout">Take the <b>tier ${best.tier}</b> roll (${best.stats.filter(x=>PER_CHEST[x.id]).map(x=>STAT_NAMES[x.id]+" +"+x.raw).join(", ")})
-          and put it on one of your <b>${s.boatsDeadForArtifacts}</b> artifact-dead boats. Even at level 1 it beats their zero, and the stored roll
-          never changes — only <code>level × roll</code> grows, so a good roll at level 1 is already a good captain.</div>`
-      : `<div class="callout warn">Nothing worth buying today — no roll carries Artifact Find or Rare Chest.</div>`}
-    <div class="foot">Scored for <b>this</b> account: all islands unlocked ⇒ Cloud Discover is dead; clamped at min travel time ⇒ Boat Speed is discarded by the game's Math.min. Loot Value is treasure income and never touches artifact odds.</div>`;
-
-  /* --- fleet --- */
-  const boats = [...s.boats].sort((a,b)=>b.eArtiMulti-a.eArtiMulti);
-  const bare = boats[boats.length-1];
-  const potential = boats[0].eArtiMulti * boats.length;
-  $("fleetPanel").style.display = "";
-  $("fleetPanel").innerHTML = `
-    <h2>Fleet <span class="hint">${s.boats.length} boats · island ${s.boats[0]?.island ?? "?"}</span></h2>
-    <div class="callout">Rare Chest is the only captain stat that moves chest rarity — the <code>1.4^rarity</code> exponent on artifact chance.
-      <b>${s.boatsWithRareChest} of ${s.boats.length}</b> boats have it. Bringing every boat to your best captain's chest quality is
-      <b>${fmt(potential/s.fleetArtiMulti,2)}×</b> more artifacts, without touching anything outside sailing.</div>
-    <div class="scroll"><table>
-      <tr><th>boat</th><th>cap</th><th>tier</th><th>lv</th><th>stats</th><th>rare chest</th><th>E[1.4^r]</th><th>basic→noble mix</th></tr>
-      ${boats.map(b=>{
-        const c = s.captains.find(x=>x.i===b.captainIdx) || {tier:"?",level:"?",stats:[]};
-        const mix = b.chestDist.slice(0,4).map((p,r)=>`${CHESTS[r].name[0]}${(p*100).toFixed(0)}`).join(" ");
-        return `<tr>
-          <td>${b.i}</td><td>${b.captainIdx}</td><td>${c.tier}</td><td>${c.level}</td>
-          <td>${(c.stats||[]).map(statChip).join(" ")}</td>
-          <td>${b.rareChest || `<span style="color:var(--ink-muted)">0</span>`}</td>
-          <td>${fmt(b.eArtiMulti,3)}</td>
-          <td style="color:var(--ink-muted)">${mix}</td>
+      <tr><th>island</th><th>un-maxed</th><th>basic chest</th><th>vs current</th><th>artifacts</th></tr>
+      ${live.map(i=>{
+        const rel = fleetOn(i)/fleetOn(cur);
+        return `<tr class="${i.i===cur.i?"pick":(rel<1?"dim":"")}">
+          <td>${i.i}${i.i===cur.i?" ·":""}</td>
+          <td>${i.unmaxed} / ${i.count}</td>
+          <td>${oneIn(chanceFor(s.baseMulti, i))}</td>
+          <td class="${rel>1?"up":"down"}">${rel.toFixed(2)}×</td>
+          <td>${i.artifacts.filter(a=>a.tier<6).map(a=>`<span class="chip">${a.name}</span>`).join(" ")}</td>
         </tr>`;
       }).join("")}
-    </table></div>
-    <div class="foot">E[1.4^r] = expected artifact multiplier from chest rarity. Best boat ${fmt(boats[0].eArtiMulti,3)} vs bare boat ${fmt(bare.eArtiMulti,3)}
-      — a ${fmt(boats[0].eArtiMulti/bare.eArtiMulti,2)}× spread that comes entirely from one captain stat.</div>`;
+    </table></div>`;
+
+  /* Shop captains arrive at level 1, and effect = level × storedRoll. Scoring them as they
+   * stand ranks every roll at its worst moment and buries good ones. The stored roll never
+   * changes, so project to CAP_LV to judge the roll itself, and show today's number too —
+   * a swap can be negative now and still correct. */
+  const CAP_LV = 20;
+  const atLevel = (c, lv) => ({
+    rareChest:    c.stats.reduce((t,x)=> t + (x.id===4 ? lv*x.raw : 0), 0),
+    artifactFind: c.stats.reduce((t,x)=> t + (x.id===3 ? lv*x.raw : 0), 0),
+  });
+  const rateWith = (v, isl) => chestDistFor(v.rareChest, s.arrowheadBonus)
+    .reduce((t,p,r)=> t + p * chanceFor(s.baseMulti*(100+s.additivePoolPct+v.artifactFind)/(100+s.additivePoolPct)*CHEST[r].arti, isl), 0);
+
+  const swaps = [];
+  for (const c of s.shop) for (const b of s.boats) {
+    const now  = rateWith(atLevel(c, c.level), sel) - boatRate(s,b,sel);
+    const late = rateWith(atLevel(c, CAP_LV), sel) - boatRate(s,b,sel);
+    swaps.push({ c, b, now, late });
+  }
+  swaps.sort((a,b)=> b.late - a.late);     // judge the roll, not its current level
+  const top = swaps[0];
+  const fleetNow = fleetOn(sel);
+  $("shopPanel").style.display = "";
+  $("shopPanel").innerHTML = `
+    <h2>Captain shop <span class="hint">today's 4 rolls</span></h2>
+    ${top && top.late > 0
+      ? `<div class="rec">Buy the <b>tier ${top.c.tier}</b> roll (${top.c.stats.filter(x=>LIVE[s.phase].includes(x.id)).map(x=>STAT[x.id]+" +"+x.raw).join(", ")||"—"})
+         and replace <b>captain ${top.b.captainIdx} on boat ${top.b.i}</b> —
+         <b class="${top.now>=0?"up":"down"}">${top.now>=0?"+":""}${(top.now/fleetNow*100).toFixed(2)}%</b> now,
+         <b class="up">+${(top.late/fleetNow*100).toFixed(2)}%</b> at lv${CAP_LV}.</div>`
+      : `<div class="rec none">Nothing worth buying — no roll beats a captain you already have, even levelled.</div>`}
+    <div class="scroll"><table>
+      <tr><th>tier</th><th>lv</th><th>stats</th><th>replaces</th><th>now</th><th>at lv${CAP_LV}</th></tr>
+      ${s.shop.map(c=>{
+        const bestFor = swaps.filter(x=>x.c===c)[0];
+        const good = bestFor && bestFor.late>0;
+        return `<tr class="${good?"":"dim"}">
+          <td>${c.tier}</td><td>${c.level}</td>
+          <td>${c.stats.map(x=>statChip(x, s.phase)).join(" ")}</td>
+          <td>${good ? `cap ${bestFor.b.captainIdx} · boat ${bestFor.b.i}` : "—"}</td>
+          <td class="${good && bestFor.now>=0?"up":"down"}">${good ? (bestFor.now>=0?"+":"")+(bestFor.now/fleetNow*100).toFixed(2)+"%" : "—"}</td>
+          <td class="${good?"up":""}">${good ? "+"+(bestFor.late/fleetNow*100).toFixed(2)+"%" : "—"}</td>
+        </tr>`;
+      }).join("")}
+    </table></div>`;
+
+  /* fleet — per-tier chance on the selected island */
+  const boats = [...s.boats].sort((a,b)=> boatRate(s,b,sel)-boatRate(s,a,sel));
+  $("fleetPanel").style.display = "";
+  $("fleetPanel").innerHTML = `
+    <h2>Fleet
+      <span class="hint">chance per chest on</span>
+      <select id="islSel">${s.islands.map(i=>`<option value="${i.i}" ${i.i===ISLAND?"selected":""}>island ${i.i}${i.unmaxed?` · ${i.unmaxed} un-maxed`:" · nothing left"}</option>`).join("")}</select>
+    </h2>
+    <div class="scroll"><table>
+      <tr><th>boat</th><th>cap</th><th>tier</th><th>lv</th><th>stats</th>${CHEST.slice(0,5).map(c=>`<th>${c.name}</th>`).join("")}<th>per chest</th></tr>
+      ${boats.map(b=>{
+        const c = s.captains.find(x=>x.i===b.captainIdx) || {tier:"?",level:"?",stats:[]};
+        const m = boatMulti(s,b);
+        return `<tr>
+          <td>${b.i}</td><td>${b.captainIdx}</td><td>${c.tier}</td><td>${c.level}</td>
+          <td>${(c.stats||[]).map(x=>statChip(x, s.phase)).join(" ")}</td>
+          ${CHEST.slice(0,5).map(ct=>`<td>${oneIn(chanceFor(m*ct.arti, sel))}</td>`).join("")}
+          <td>${oneIn(boatRate(s,b,sel))}</td>
+        </tr>`;
+      }).join("")}
+    </table></div>`;
+  $("islSel").onchange = (ev) => { ISLAND = Number(ev.target.value); render(); };
+}
+
+/* mirrors domain.mjs chestDist(): roll = U(0,1)/divisor, nested thresholds */
+const TH = [1.0, 0.25, 0.05, 0.007, 0.0003, 0.000001];
+function chestDistFor(rareChest, arrowhead) {
+  const d = 1 + (rareChest + arrowhead) / 200;
+  const cum = TH.map(t => Math.min(1, t*d));
+  return cum.map((c,r) => c - (cum[r+1] ?? 0));
 }
 
 (async () => {
   try {
     const r = await (await fetch("/api/state")).json();
-    if (!r.snapshot) { $("err").textContent = "No snapshot yet — hit Sync on the dashboard first."; return; }
-    render(r.snapshot);
+    if (!r.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = r.snapshot; render();
   } catch (e) { $("err").textContent = "Failed to load /api/state: " + e.message; }
 })();
 </script>
