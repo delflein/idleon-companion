@@ -1,0 +1,15 @@
+# Account access — refreshToken grants full read of the IdleOn save. Never commit.
+.idleon-auth.json
+
+# Personal save data & derived history
+idleon.db
+idleon.db-shm
+idleon.db-wal
+savegame.json
+savedata.js
+history.json
+history.js
+
+# OS / editor
+.DS_Store
+node_modules/

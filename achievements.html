@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Achievement Tracker — IdleOn Command Center</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --surface-1: #1a1a19; --page: #0d0d0d;
+    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
+    --grid: #2c2c2a; --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --delta-good: #0ca30c;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --delta-good: #006300;
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--page); color:var(--ink-1); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:14px; line-height:1.45; padding:20px; max-width:1080px; margin:0 auto; }
+  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  header h1 { font-size:21px; font-weight:650; }
+  header .spacer { flex:1; }
+  nav.pages { display:flex; gap:2px; border:1px solid var(--border); border-radius:10px; padding:2px; }
+  nav.pages a { color:var(--ink-2); text-decoration:none; font-size:12.5px; padding:4px 12px; border-radius:8px; }
+  nav.pages a.here { background:var(--series-1); color:#fff; }
+  nav.pages a:hover:not(.here) { background:var(--grid); }
+  button.ghost { background:none; border:1px solid var(--border); color:var(--ink-2); border-radius:8px; padding:5px 11px; font:inherit; font-size:12.5px; cursor:pointer; }
+  button.ghost:hover { background:var(--surface-1); }
+  #syncState { font-size:12px; color:var(--ink-muted); }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+  .tile { background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
+  .tile .label { color:var(--ink-muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
+  .tile .value { font-size:24px; font-weight:650; margin-top:2px; font-variant-numeric:tabular-nums; }
+  .tile .sub { color:var(--ink-2); font-size:12px; margin-top:2px; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .controls .tabs, .controls .worlds { display:flex; gap:4px; }
+  .controls button.f { background:none; border:1px solid var(--border); border-radius:999px; color:var(--ink-2); padding:3px 12px; font:inherit; font-size:12.5px; cursor:pointer; }
+  .controls button.f.active { border-color:var(--series-1); color:var(--ink-1); }
+  .controls input { background:var(--surface-1); border:1px solid var(--border); color:var(--ink-1); border-radius:8px; padding:5px 10px; font:inherit; font-size:12.5px; width:180px; }
+  .controls label { font-size:12.5px; color:var(--ink-2); display:flex; align-items:center; gap:5px; cursor:pointer; }
+  section.panel { background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:6px 16px; margin-bottom:14px; }
+  section.panel h2 { font-size:13.5px; font-weight:650; padding:10px 0 6px; color:var(--ink-1); }
+  section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; margin-left:6px; }
+  .ach { display:flex; gap:12px; padding:9px 2px; border-top:1px solid var(--grid); align-items:flex-start; }
+  .ach:first-of-type { border-top:none; }
+  .ach .st { flex:none; width:20px; text-align:center; font-size:14px; margin-top:1px; }
+  .ach .st.done { color:var(--good); }
+  .ach .body { flex:1; min-width:0; }
+  .ach .nm { font-weight:600; font-size:13.5px; }
+  .ach .nm .tag { font-size:10.5px; font-weight:500; border:1px solid var(--border); color:var(--ink-muted); border-radius:4px; padding:0 5px; margin-left:6px; vertical-align:1px; }
+  .ach .nm .tag.hard { color:var(--serious); border-color:var(--serious); }
+  .ach .desc { color:var(--ink-2); font-size:12.5px; margin-top:1px; }
+  .ach .prog { flex:none; width:180px; text-align:right; }
+  .ach .prog .pct { font-size:12.5px; font-variant-numeric:tabular-nums; color:var(--ink-2); }
+  .bar-bg { background:var(--grid); border-radius:4px; height:7px; overflow:hidden; margin-top:5px; }
+  .bar-fill { background:var(--series-1); height:100%; border-radius:4px; }
+  .pin { flex:none; background:none; border:none; color:var(--baseline); cursor:pointer; font-size:15px; padding:0 2px; margin-top:1px; }
+  .pin.on { color:var(--warning); }
+  .empty-note { color:var(--ink-muted); font-size:12.5px; padding:12px 0; }
+  #noData { text-align:center; padding:60px 0; color:var(--ink-2); }
+  .foot { color:var(--ink-muted); font-size:11.5px; margin:14px 0 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Achievement Tracker</h1>
+  <nav class="pages">
+    <a href="dashboard.html">Dashboard</a>
+    <a class="here" href="achievements.html">Achievements</a>
+  </nav>
+  <div class="spacer"></div>
+  <span id="syncState">—</span>
+  <button class="ghost" id="syncBtn" style="display:none">Sync now</button>
+  <button class="ghost" id="themeBtn">Theme</button>
+</header>
+
+<div id="noData">No save data found — open the <a href="dashboard.html" style="color:var(--series-1)">Dashboard</a> first (connect or drop a savegame.json there).</div>
+
+<div id="app" style="display:none">
+  <div class="cards" id="tiles"></div>
+  <div class="controls">
+    <div class="tabs" id="statusTabs">
+      <button class="f active" data-v="open">Open</button>
+      <button class="f" data-v="done">Done</button>
+      <button class="f" data-v="all">All</button>
+    </div>
+    <div class="worlds" id="worldTabs">
+      <button class="f active" data-v="-1">All worlds</button>
+      <button class="f" data-v="0">W1</button><button class="f" data-v="1">W2</button>
+      <button class="f" data-v="2">W3</button><button class="f" data-v="3">W4</button>
+      <button class="f" data-v="4">W5</button><button class="f" data-v="5">W6</button>
+    </div>
+    <div class="worlds" id="catTabs">
+      <button class="f active" data-v="all">All types</button>
+      <button class="f" data-v="active">Missions</button>
+      <button class="f" data-v="minigame">Minigames</button>
+      <button class="f" data-v="stack">Stacks</button>
+      <button class="f" data-v="dungeon">Dungeons</button>
+      <button class="f" data-v="grind">Grinds</button>
+      <button class="f" data-v="idle">Idle</button>
+    </div>
+    <input type="text" id="q" placeholder="search…">
+  </div>
+  <div id="lists"></div>
+  <p class="foot">Grouped by <b>how you actually finish them</b>: active missions (one session + the right strategy — tips included), skill minigames, dungeon runs, exact storage stacks, background grinds, and ones that finish themselves while you idle. Steam-exclusive achievements are read from your Steam achievement data. Pin (☆) anything to keep it on top.</p>
+</div>
+
+<script src="savedata.js" onerror="void 0"></script>
+<script src="sync.js" onerror="void 0"></script>
+<script src="ach-data.js" onerror="void 0"></script>
+<script>
+"use strict";
+const $ = (id)=>document.getElementById(id);
+const fmt = (n)=>Number(n).toLocaleString("en-US");
+const J = (v)=>{ if (typeof v==="string"){ try{ return JSON.parse(v);}catch(e){ return v; } } return v; };
+
+/* pin storage (guarded) */
+const store = (()=>{ let mem={}; let ok=false; try{ localStorage.setItem("_t","1"); localStorage.removeItem("_t"); ok=true; }catch(e){}
+  return { get:(k)=> ok?localStorage.getItem(k):(mem[k]??null), set:(k,v)=>{ try{ ok?localStorage.setItem(k,v):(mem[k]=v);}catch(e){mem[k]=v;} } }; })();
+const pins = new Set(JSON.parse(store.get("achPins")||"[]"));
+
+let FILTER = { status:"open", world:-1, cat:"all", q:"" };
+let ITEMS = [];
+const CATS = [
+  ["active",  "Active missions",  "one focused session + the right strategy — tips included"],
+  ["stack",   "Exact stacks",     "prep the exact amount in your Storage Chest"],
+  ["dungeon", "Dungeon runs",     "manual party-dungeon sessions"],
+  ["minigame","Minigame challenges","skill-based — a different beast, pick your battles"],
+  ["grind",   "Long grinds",      "background persistence over weeks"],
+  ["idle",    "Finishes itself",  "just keep idling — zero action needed"]
+];
+
+function build(raw) {
+  if (!window.ACH_DATA) { $("noData").textContent = "ach-data.js missing next to this file."; return; }
+  const ar = J(raw.AchieveReg)||[], sa = J(raw.SteamAchieve)||[];
+  ITEMS = ACH_DATA.achievements.map(a=>{
+    const prog = ("steam" in a) ? sa[a.steam] : ar[a.i];
+    const done = prog === -1;
+    const qty = a.qty && a.qty > 1 ? a.qty : null;
+    const frac = done ? 1 : (qty ? Math.min(prog/qty, 0.999) : null);
+    return { ...a, prog: done?null:prog, done, qty, frac };
+  });
+  $("noData").style.display="none"; $("app").style.display="block";
+  renderTiles(); renderLists();
+}
+
+function renderTiles() {
+  const done = ITEMS.filter(a=>a.done).length;
+  const open = ITEMS.filter(a=>!a.done);
+  const n = (c)=>open.filter(a=>a.cat===c).length;
+  $("tiles").innerHTML = [
+    ["Completed", `${done} / ${ITEMS.length}`, Math.round(done/ITEMS.length*100)+"% · 850-pt Tome line"],
+    ["Missions & stacks", n("active")+n("stack")+n("dungeon"), "doable sessions — tips included"],
+    ["Minigames", n("minigame"), "skill challenges, own category"],
+    ["Runs on its own", n("idle")+n("grind"), "idle timers + background grinds"]
+  ].map(([l,v,s])=>`<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${s}</div></div>`).join("");
+}
+
+function matches(a) {
+  if (FILTER.status==="open" && a.done) return false;
+  if (FILTER.status==="done" && !a.done) return false;
+  if (FILTER.world>=0 && a.world!==FILTER.world) return false;
+  if (FILTER.cat!=="all" && a.cat!==FILTER.cat) return false;
+  if (FILTER.q && !(a.name+" "+a.desc).toLowerCase().includes(FILTER.q)) return false;
+  return true;
+}
+/* attainability sort: pinned > partial progress (closest first) > untracked easy > by world */
+function sortOpen(x,y) {
+  const px = pins.has(x.i)?1:0, py = pins.has(y.i)?1:0;
+  if (px!==py) return py-px;
+  const fx = x.frac??-1, fy = y.frac??-1;
+  if (fx!==fy) return fy-fx;
+  return x.world-y.world || x.i-y.i;
+}
+
+function row(a) {
+  const st = a.done ? `<div class="st done">✓</div>` : `<div class="st" style="color:var(--ink-muted)">·</div>`;
+  const tags =
+    ("steam" in a ? `<span class="tag">steam</span>` : "") +
+    (a.secret ? `<span class="tag">secret</span>` : "") +
+    `<span class="tag">W${a.world+1}</span>`;
+  let prog = "";
+  if (!a.done && a.qty) {
+    prog = `<div class="pct">${fmt(a.prog||0)} / ${fmt(a.qty)}</div><div class="bar-bg"><div class="bar-fill" style="width:${((a.frac||0)*100).toFixed(1)}%"></div></div>`;
+  } else if (!a.done && a.prog > 0) {
+    prog = `<div class="pct">progress: ${fmt(a.prog)}</div>`;
+  }
+  const tip = (!a.done && a.tip) ? `<div class="desc" style="margin-top:4px;color:var(--ink-1)"><span style="color:var(--warning)">💡</span> ${a.tip}</div>` : "";
+  return `<div class="ach">
+    <button class="pin ${pins.has(a.i)?"on":""}" data-i="${a.i}" title="pin">${pins.has(a.i)?"★":"☆"}</button>
+    ${st}
+    <div class="body"><div class="nm">${a.name}${tags}</div><div class="desc">${a.desc}</div>${tip}</div>
+    <div class="prog">${prog}</div>
+  </div>`;
+}
+
+function renderLists() {
+  const vis = ITEMS.filter(matches);
+  const el = $("lists");
+  let html = "";
+  if (FILTER.status!=="done") {
+    const open = vis.filter(a=>!a.done);
+    const pinned = open.filter(a=>pins.has(a.i)).sort(sortOpen);
+    if (pinned.length) html += `<section class="panel"><h2>★ Pinned <span class="hint">${pinned.length}</span></h2>${pinned.map(row).join("")}</section>`;
+    for (const [key, title, hint] of CATS) {
+      if (FILTER.cat!=="all" && FILTER.cat!==key) continue;
+      const items = open.filter(a=>a.cat===key && !pins.has(a.i)).sort(sortOpen);
+      if (!items.length) continue;
+      html += `<section class="panel"><h2>${title} <span class="hint">${items.length} — ${hint}</span></h2>${items.map(row).join("")}</section>`;
+    }
+    if (!html) html = `<section class="panel"><div class="empty-note">Nothing here — filters hide everything, or you've cleared them all. 🎉</div></section>`;
+  }
+  if (FILTER.status!=="open") {
+    const done = vis.filter(a=>a.done);
+    html += `<section class="panel"><h2>Done <span class="hint">${done.length}</span></h2>${done.map(row).join("")}</section>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll(".pin").forEach(b=>{
+    b.onclick = ()=>{ const i=+b.dataset.i; pins.has(i)?pins.delete(i):pins.add(i); store.set("achPins", JSON.stringify([...pins])); renderLists(); };
+  });
+}
+
+/* controls */
+$("statusTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.status=b.dataset.v; $("statusTabs").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); renderLists(); });
+$("worldTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.world=+b.dataset.v; $("worldTabs").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); renderLists(); });
+$("catTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.cat=b.dataset.v; $("catTabs").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); renderLists(); });
+$("q").oninput = (e)=>{ FILTER.q=e.target.value.trim().toLowerCase(); renderLists(); };
+$("themeBtn").onclick = ()=>{ const r=document.documentElement; r.dataset.theme = r.dataset.theme==="light" ? "" : "light"; };
+
+/* sync (server mode via companion.mjs, else direct browser sync) */
+const SRV = () => window.IdleonSync && IdleonSync.SERVER;
+async function serverLoad(){
+  const s = await IdleonSync.serverInit();
+  if (s.snapshot) {
+    const raw = await (await fetch(`/api/snapshot/${s.snapshot.id}/raw`)).json();
+    build(raw);
+    $("syncState").textContent = "server · "+new Date(s.snapshot.ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  } else $("syncState").textContent = "server · no data yet";
+  return s;
+}
+async function doSync(){
+  $("syncState").textContent = "syncing…";
+  try {
+    if (SRV()) { await IdleonSync.serverSyncNow(); await serverLoad(); return; }
+    const { raw, meta } = await IdleonSync.sync(); build(raw);
+    $("syncState").textContent = "live · "+new Date(meta.fetchedAt).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+  } catch(e){ $("syncState").textContent = "sync failed: "+e.message; }
+}
+(async function init(){
+  if (SRV()) {
+    try { const s = await serverLoad(); if (s.connected) { $("syncBtn").style.display=""; $("syncBtn").onclick=doSync; } }
+    catch(e){ $("syncState").textContent = "server error: "+e.message; }
+    return;
+  }
+  const best = window.IdleonSync ? IdleonSync.loadBest() : (window.SAVEGAME ? {raw:window.SAVEGAME} : null);
+  if (best) build(best.raw);
+  if (window.IdleonSync && IdleonSync.getAuth()) { $("syncBtn").style.display=""; $("syncBtn").onclick=doSync; $("syncState").textContent="connected"; doSync(); }
+  else $("syncState").textContent = "not connected — connect on the Dashboard";
+})();
+</script>
+</body>
+</html>
