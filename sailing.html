@@ -45,6 +45,8 @@
   section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; }
   table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; font-size:12.5px; }
   th { text-align:left; color:var(--ink-muted); font-weight:500; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:0 8px 6px 0; white-space:nowrap; }
+  th.sortable { cursor:pointer; user-select:none; }
+  th.sortable:hover { color:var(--ink-1); }
   td { padding:5px 8px 5px 0; border-top:1px solid var(--grid); white-space:nowrap; }
   tr.dim td { color:var(--ink-muted); }
   tr.pick td { background:rgba(57,135,229,.09); }
@@ -106,6 +108,14 @@ const RANK = {
 const LIVE = { speed: [0,1], artifact: [4,3], loot: [1] };
 
 let SNAP = null, ISLAND = null;
+let SORT = { col: "boat", dir: 1 };   // boat order by default — the order they appear in-game
+
+/* The game labels captains with letters, not indices: 0=A, 1=B, ... 25=Z, 26=AA. */
+function capLabel(i) {
+  let s = "", n = i;
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
 
 function statChip(s, phase) {
   const live = LIVE[phase].includes(s.id);
@@ -192,7 +202,7 @@ function render() {
     <h2>Captain shop <span class="hint">today's 4 rolls</span></h2>
     ${top && top.late > 0
       ? `<div class="rec">Buy the <b>tier ${top.c.tier}</b> roll (${top.c.stats.filter(x=>LIVE[s.phase].includes(x.id)).map(x=>STAT[x.id]+" +"+x.raw).join(", ")||"—"})
-         and replace <b>captain ${top.b.captainIdx} on boat ${top.b.i}</b> —
+         and replace <b>captain ${capLabel(top.b.captainIdx)} on boat ${top.b.i}</b> —
          <b class="${top.now>=0?"up":"down"}">${top.now>=0?"+":""}${(top.now/fleetNow*100).toFixed(2)}%</b> now,
          <b class="up">+${(top.late/fleetNow*100).toFixed(2)}%</b> at lv${CAP_LV}.</div>`
       : `<div class="rec none">Nothing worth buying — no roll beats a captain you already have, even levelled.</div>`}
@@ -204,15 +214,36 @@ function render() {
         return `<tr class="${good?"":"dim"}">
           <td>${c.tier}</td><td>${c.level}</td>
           <td>${c.stats.map(x=>statChip(x, s.phase)).join(" ")}</td>
-          <td>${good ? `cap ${bestFor.b.captainIdx} · boat ${bestFor.b.i}` : "—"}</td>
+          <td>${good ? `cap ${capLabel(bestFor.b.captainIdx)} · boat ${bestFor.b.i}` : "—"}</td>
           <td class="${good && bestFor.now>=0?"up":"down"}">${good ? (bestFor.now>=0?"+":"")+(bestFor.now/fleetNow*100).toFixed(2)+"%" : "—"}</td>
           <td class="${good?"up":""}">${good ? "+"+(bestFor.late/fleetNow*100).toFixed(2)+"%" : "—"}</td>
         </tr>`;
       }).join("")}
     </table></div>`;
 
-  /* fleet — per-tier chance on the selected island */
-  const boats = [...s.boats].sort((a,b)=> boatRate(s,b,sel)-boatRate(s,a,sel));
+  /* fleet — per-tier chance on the selected island.
+   * Chance columns sort by the displayed "1 in N", so ascending = best first. */
+  const rows = s.boats.map(b => {
+    const c = s.captains.find(x=>x.i===b.captainIdx) || { tier:0, level:0, stats:[] };
+    const m = boatMulti(s,b);
+    return {
+      b, c, m,
+      tiers: CHEST.slice(0,5).map(ct => chanceFor(m*ct.arti, sel)),
+      rate: boatRate(s,b,sel),
+    };
+  });
+  const COLS = [
+    { k:"boat",  t:"boat",      get:r=>r.b.i },
+    { k:"cap",   t:"cap",       get:r=>r.b.captainIdx },
+    { k:"tier",  t:"tier",      get:r=>r.c.tier },
+    { k:"lv",    t:"lv",        get:r=>r.c.level },
+    { k:"stats", t:"stats",     get:null },
+    ...CHEST.slice(0,5).map((ct,i)=>({ k:"t"+i, t:ct.name, get:r=> r.tiers[i]>0 ? 1/r.tiers[i] : Infinity })),
+    { k:"rate",  t:"per chest", get:r=> r.rate>0 ? 1/r.rate : Infinity },
+  ];
+  const sc = COLS.find(c=>c.k===SORT.col) || COLS[0];
+  rows.sort((x,y)=> (sc.get(x) - sc.get(y)) * SORT.dir);
+
   $("fleetPanel").style.display = "";
   $("fleetPanel").innerHTML = `
     <h2>Fleet
@@ -220,19 +251,24 @@ function render() {
       <select id="islSel">${s.islands.map(i=>`<option value="${i.i}" ${i.i===ISLAND?"selected":""}>island ${i.i}${i.unmaxed?` · ${i.unmaxed} un-maxed`:" · nothing left"}</option>`).join("")}</select>
     </h2>
     <div class="scroll"><table>
-      <tr><th>boat</th><th>cap</th><th>tier</th><th>lv</th><th>stats</th>${CHEST.slice(0,5).map(c=>`<th>${c.name}</th>`).join("")}<th>per chest</th></tr>
-      ${boats.map(b=>{
-        const c = s.captains.find(x=>x.i===b.captainIdx) || {tier:"?",level:"?",stats:[]};
-        const m = boatMulti(s,b);
-        return `<tr>
-          <td>${b.i}</td><td>${b.captainIdx}</td><td>${c.tier}</td><td>${c.level}</td>
-          <td>${(c.stats||[]).map(x=>statChip(x, s.phase)).join(" ")}</td>
-          ${CHEST.slice(0,5).map(ct=>`<td>${oneIn(chanceFor(m*ct.arti, sel))}</td>`).join("")}
-          <td>${oneIn(boatRate(s,b,sel))}</td>
-        </tr>`;
-      }).join("")}
+      <tr>${COLS.map(c=> c.get
+        ? `<th class="sortable" data-col="${c.k}">${c.t}${SORT.col===c.k ? (SORT.dir>0?" ▲":" ▼") : ""}</th>`
+        : `<th>${c.t}</th>`).join("")}</tr>
+      ${rows.map(r=>`<tr>
+        <td>${r.b.i}</td><td>${capLabel(r.b.captainIdx)}</td><td>${r.c.tier}</td><td>${r.c.level}</td>
+        <td>${(r.c.stats||[]).map(x=>statChip(x, s.phase)).join(" ")}</td>
+        ${r.tiers.map(p=>`<td>${oneIn(p)}</td>`).join("")}
+        <td>${oneIn(r.rate)}</td>
+      </tr>`).join("")}
     </table></div>`;
   $("islSel").onchange = (ev) => { ISLAND = Number(ev.target.value); render(); };
+  for (const th of document.querySelectorAll("#fleetPanel th.sortable")) {
+    th.onclick = () => {
+      const col = th.dataset.col;
+      SORT = { col, dir: SORT.col === col ? -SORT.dir : 1 };
+      render();
+    };
+  }
 }
 
 /* mirrors domain.mjs chestDist(): roll = U(0,1)/divisor, nested thresholds */
