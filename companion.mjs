@@ -99,6 +99,22 @@ async function syncNow(source = "sync") {
       const r2 = await fetch(`https://idlemmo.firebaseio.com/_uid/${uid}.json?auth=${t.id_token}`);
       if (r2.ok) { const j = await r2.json(); if (j) charNames = Object.values(j); }
     } catch {}
+
+    /* Companion ownership is NOT in the Firestore save — it lives in the Realtime DB at
+     * _comp/{uid}, which is what the client's native getCompanionInfoMe() bridge is backed by.
+     * Same uid, same idToken; no new auth. It is worth up to ~5x on artifact find.
+     * Merged INTO `raw` (rather than a new snapshots column) because rebuildDerived() replays
+     * extractEntities(raw, ...) over the gzipped raws — anything outside `raw` is invisible to
+     * that replay and would silently produce companion-less history. `__` cannot collide: zero
+     * of the 817 real save keys start with an underscore.
+     * On failure we leave the key ABSENT, which artifactchance reads as "unknown" and flags.
+     * Absent must never be mistaken for "owns nothing" — that would silently under-report. */
+    try {
+      const r3 = await fetch(`https://idlemmo.firebaseio.com/_comp/${uid}.json?auth=${t.id_token}`);
+      if (r3.ok) { const j = await r3.json(); if (j) raw.__companions = j; else console.warn("companions: _comp doc empty"); }
+      else console.warn(`companions: _comp read failed HTTP ${r3.status} — artifact odds will be a lower bound`);
+    } catch (e) { console.warn("companions: _comp fetch failed:", e.message, "— artifact odds will be a lower bound"); }
+
     const result = ingest(db, raw, { source, charNames });
     console.log(`[${new Date().toISOString()}] synced snapshot #${result.id} (${source})`);
     return result;

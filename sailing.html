@@ -60,6 +60,9 @@
   select { background:var(--page); color:var(--ink-1); border:1px solid var(--border); border-radius:7px; padding:3px 8px; font:inherit; font-size:12.5px; }
   .err { color:var(--critical); }
   .scroll { overflow-x:auto; }
+  .caveat { border-left:3px solid var(--warning); background:rgba(250,178,25,.06); padding:8px 11px; border-radius:0 8px 8px 0; margin-bottom:14px; font-size:12.5px; color:var(--ink-2); }
+  .caveat:empty { display:none; }
+  .caveat code { color:var(--ink-1); font-size:11.5px; }
   .up { color:var(--good); } .down { color:var(--ink-muted); }
 </style>
 </head>
@@ -76,15 +79,21 @@
 </header>
 
 <div id="err" class="err"></div>
+<div id="caveat" class="caveat"></div>
 <div class="cards" id="tiles"></div>
 <section class="panel" id="islandPanel" style="display:none"></section>
 <section class="panel" id="shopPanel" style="display:none"></section>
 <section class="panel" id="fleetPanel" style="display:none"></section>
+<section class="panel" id="sourcePanel" style="display:none"></section>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const int = (n) => Math.round(n).toLocaleString();
-const oneIn = (p) => p > 0 ? "1 in " + int(1/p) : "—";
+/* When the artifact multiplier is a LOWER bound (terms we couldn't derive contribute their
+ * neutral element), the real chance is >= computed, so the real "1 in N" is <= N. Render the
+ * bound rather than a bare number: a floor must never read as a fact. */
+let LOWER = false;
+const oneIn = (p) => p > 0 ? (LOWER ? "≤ 1 in " : "1 in ") + int(1/p) : "—";
 
 const CHEST = [
   {name:"Basic",   arti:1.0},   {name:"Iron",    arti:1.4},
@@ -138,7 +147,12 @@ const boatRate = (s, b, isl) =>
 function render() {
   const s = SNAP.entities?.sailing;
   if (!s) { $("err").innerHTML = `No <code>sailing</code> entity — run <b>POST /api/rebuild</b>, then reload.`; return; }
-  s.baseMulti = 2182.12e6/100;   // TODO: from the client's ~19-term BoatArtiMulti instead of this reading
+  /* s.baseMulti now arrives COMPUTED from domain.mjs (artifactchance.mjs evaluates the client's
+   * ~28-term BoatArtiMulti against the save). It used to be hardcoded to one account's in-game
+   * reading, which was wrong for everybody else. Older snapshots predate the field — rebuild
+   * rather than silently falling back to a constant. */
+  if (!s.baseMulti) { $("err").innerHTML = `This snapshot has no computed <code>baseMulti</code> — run <b>POST /api/rebuild</b>, then reload.`; return; }
+  LOWER = !!s.artiLowerBound;
   $("meta").textContent = new Date(SNAP.ts).toLocaleString();
 
   const cur = s.islands.find(i => i.i === s.boats[0]?.island) || s.islands[0];
@@ -147,12 +161,29 @@ function render() {
   const live = s.islands.filter(i => i.unmaxed > 0);
   const fleetOn = (isl) => s.boats.reduce((t,b) => t + boatRate(s,b,isl), 0);
 
+  const fmtMulti = (v) => v >= 1e6 ? (v/1e6).toFixed(2)+"M×" : Math.round(v).toLocaleString()+"×";
   $("tiles").innerHTML = [
     ["Banked sailing", s.bankedHours.toFixed(2)+" h", "advances every boat on claim"],
     ["Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "waiting"],
     ["Artifacts maxed", s.artifactsMaxed+" / "+(s.artifactsMaxed+s.artifactsRemaining), s.artifactsRemaining+" to go"],
     ["Rare Chest boats", s.boatsWithRareChest+" / "+s.boats.length, s.boatsDeadForArtifacts+" dead for artifacts"],
+    ["Artifact find", (s.artiLowerBound?"≥ ":"")+fmtMulti(s.baseMulti),
+      s.artiLowerBound ? `${s.artiUnknown.length} term(s) unknown — real value is higher` : "computed from save"],
   ].map(([l,v,sub]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
+
+  /* The absolute "1 in X" numbers below inherit two things the save cannot tell us: the
+   * calibrated Firebase server vars, and any BoatArtiMulti term we could not compute. Ratios
+   * between islands/boats/captains are unaffected. Say so instead of implying false precision. */
+  $("caveat").innerHTML = s.artiLowerBound
+    ? `<b>The "1 in N" columns are a FLOOR, not a value — and possibly a distant one.</b>
+       ${s.artiUnknown.length} artifact-find term(s) can't be derived from the save
+       (${s.artiUnknown.slice(0,3).map(u=>`<code>${u.split(" —")[0].split(" [")[0]}</code>`).join(", ")}${s.artiUnknown.length>3?", …":""}),
+       so each contributes its neutral value and your real chance is <b>better than shown</b> —
+       on a maxed account by as much as ~50×. The island divisors also depend on Firebase server
+       vars that are calibrated, not read. <b>Rankings and × comparisons are unaffected</b>
+       (every missing term is a global multiplier and cancels out of a ratio) —
+       <b>trust those, not the absolute odds.</b>`
+    : "";
 
   /* islands */
   const best = [...live].sort((a,b)=> fleetOn(b)-fleetOn(a))[0];
@@ -199,7 +230,7 @@ function render() {
   const fleetNow = fleetOn(sel);
   $("shopPanel").style.display = "";
   $("shopPanel").innerHTML = `
-    <h2>Captain shop <span class="hint">today's 4 rolls</span></h2>
+    <h2>Captain shop</h2>
     ${top && top.late > 0
       ? `<div class="rec">Buy the <b>tier ${top.c.tier}</b> roll (${top.c.stats.filter(x=>LIVE[s.phase].includes(x.id)).map(x=>STAT[x.id]+" +"+x.raw).join(", ")||"—"})
          and replace <b>captain ${capLabel(top.b.captainIdx)} on boat ${top.b.i}</b> —
@@ -269,10 +300,85 @@ function render() {
       render();
     };
   }
+
+  renderSources(s);
 }
 
-/* mirrors domain.mjs chestDist(): roll = U(0,1)/divisor, nested thresholds */
-const TH = [1.0, 0.25, 0.05, 0.007, 0.0003, 0.000001];
+/* Every source feeding BoatArtiMulti, straight from artifactchance.mjs's per-term breakdown.
+ * Two groups because the client's expression has two shapes: one additive bracket
+ * (1 + sum(add)/100) multiplied by a chain of independent factors. Sorted by impact, so the
+ * top row is genuinely where your artifact chance comes from — and the bottom rows are where
+ * there's headroom left.
+ * Status is shown per row rather than summarised: `unknown` terms sit at their neutral element,
+ * so a floor is visible as a floor instead of being asserted in a footnote nobody reads. */
+/* Friendly names for terms whose key is a bare client expression. Only names I can actually
+ * justify are here — anything not in this map falls back to showing the raw expression, which
+ * is ugly but true. Do not invent a label to fill a gap; a wrong name is worse than a formula. */
+const SRC_NAME = [
+  [/WinBonus/,             "Summoning · winner bonus"],
+  [/DaveyJonesBonus/,      "Davey Jones · gem shop"],
+  [/Spelunk\[6\]/,         "Spelunking discoveries · 1.02^n"],
+  [/PaletteBonus/,         "Gaming · palette"],
+  [/PurpleChestSlugsOwned/,"Purple Chest Slug · 1.5^owned"],
+  [/Button_Bonuses/,       "The Button"],
+  [/KillroyBonuses/,       "Killroy · skull shop"],
+  [/VotingBonusz/,         "Summoning · active vote"],
+  [/LoreEpiBon/,           "Lore episode"],
+  [/RoG_BonusQTY/,         "Sushi"],
+  [/ExoticBonusQTY/,       "Farming · exotic"],
+  [/Companions\(154\)/,    "Companion 154"],
+  [/Companions\(43\)/,     "Companion 43"],
+  [/VaultUpgBonus/,        "Summoning · vault upgrade"],
+  [/StickerBonus/,         "Sticker"],
+  [/NONdummies\[60\]/,     "Tier-6 captains"],
+  [/ShinyBonusS/,          "Shiny pets"],
+  [/GetBribeBonus/,        "Bribe · Artifact Pilfering"],
+  [/FractalIslandBonus/,   "Fractal Island"],
+  [/CaptBonusCalc/,        "This boat's captain"],
+  [/Grid_Bonus\",109/,     "Research grid · Transcendent Artifacts"],
+];
+const srcLabel = (key) => {
+  for (const [re, name] of SRC_NAME) if (re.test(key)) return name;
+  // several keys already carry a trailing human name, e.g. `Sailing(...) Fauxory Tusk`
+  const m = key.match(/\)\s+([A-Z][\w' ]+)$/);
+  return m ? m[1] : key;
+};
+
+function renderSources(s) {
+  const terms = s.artiTerms || [];
+  if (!terms.length) return;
+  const add = terms.filter(t => t.kind === "add");
+  const mul = terms.filter(t => t.kind === "mul");
+  const pool = add.reduce((t, x) => t + (x.value || 0), 0);
+
+  const tag = (t) => t.status === "computed" ? ""
+    : `<span class="chip ${t.status === "partial" ? "soon" : "dead"}">${t.status}</span>`;
+  const row = (t, fmtV) => `<tr class="${t.status === "unknown" ? "dim" : ""}">
+      <td><b>${srcLabel(t.key)}</b><div style="color:var(--ink-muted);font-size:10.5px">${t.key}</div></td>
+      <td style="text-align:right;vertical-align:top">${fmtV(t)}</td>
+      <td style="vertical-align:top">${tag(t)}</td>
+      <td style="color:var(--ink-2);white-space:normal;vertical-align:top">${t.note || ""}</td>
+    </tr>`;
+
+  $("sourcePanel").style.display = "";
+  $("sourcePanel").innerHTML = `
+    <h2>Artifact find chance sources
+      <span class="hint">${s.artiLowerBound ? "≥ " : ""}${fmtMulti(s.baseMulti)} total · ${terms.length} terms</span>
+    </h2>
+    <div class="scroll"><table>
+      <tr><th colspan="4">Additive pool → ×${(1 + pool/100).toFixed(2)} &nbsp;<span style="text-transform:none;font-weight:400">(1 + ${Math.round(pool).toLocaleString()}% / 100)</span></th></tr>
+      ${[...add].sort((a,b)=>(b.value||0)-(a.value||0)).map(t => row(t, x => "+" + Math.round(x.value||0).toLocaleString() + "%")).join("")}
+    </table></div>
+    <div class="scroll" style="margin-top:14px"><table>
+      <tr><th colspan="4">Multiplicative</th></tr>
+      ${[...mul].sort((a,b)=>(b.value||1)-(a.value||1)).map(t => row(t, x => "×" + (+(x.value||1)).toFixed(2))).join("")}
+    </table></div>`;
+}
+
+/* mirrors domain.mjs chestDist(): roll = U(0,1)/divisor, nested thresholds.
+ * Verified against N.js _customBlock_AddChest — the old values here (0.25/0.05/0.007/3e-4/1e-6)
+ * were all wrong. Keep in sync with REF.chestTiers. */
+const TH = [1.0, 0.2, 0.04, 0.006, 2.3e-4, 1e-8];
 function chestDistFor(rareChest, arrowhead) {
   const d = 1 + (rareChest + arrowhead) / 200;
   const cum = TH.map(t => Math.min(1, t*d));

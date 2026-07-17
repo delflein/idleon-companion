@@ -1,0 +1,91 @@
+/* savemap/sailing.mjs — Sailing save keys.
+ * Everything here was read directly in N.js (`_customBlock_Sailing`, `_customBlock_AddChest`,
+ * `_customBlock_CaptBonusCalc`, ~lines 17690-17760). Sailing is account-wide: the skill level
+ * is replicated into every character's Lv0_N[13] and the fleet/artifacts are a single shared set.
+ */
+export default {
+  Sailing: {
+    name: "sailing",
+    attr: "Sailing",
+    family: false,
+    scope: "account",
+    agg: null,
+    governs: null,
+    shape: "nested",
+    parse: "json",
+    desc: "Sailing top level: boat->island assignment, treasure currency, unlock counts, artifact tiers.",
+    idx: {
+      0: "per-boat current island, -1 for boats not yet at sea. Length 20. _customBlock_AddChest scans `-1==Sailing[0][g]` over 0..14 to find a free slot.",
+      1: "sailing treasure currency amounts (35 entries). NOT the chest pile. Sailing(\"ArtifactBonus\") artifact 27 uses getLOG(Sailing[1][0]).",
+      2: "[captainsUnlocked, boatsUnlocked]. AddChest bounds its boat loop by min(15, Sailing[2][1]+1).",
+      3: "artifact tier per artifact index: 0=unfound, 1=Base, 2=Ancient, 3=Eldritch, 4=Sovereign, 5=Omnipotent, 6=Transcendent. Length 60, only the first 41 are real artifacts. Sailing(\"ArtifactBonus\",i,0) returns 0 when Sailing[3][i]==0.",
+    },
+    evidence: "N.js _customBlock_Sailing(\"ArtifactBonus\",...) branches on Sailing[3][l] for the tier and reads CustomLists.ArtifactInfo[l][3] as the base value; _customBlock_AddChest reads Sailing[0]/[2].",
+    confidence: "confirmed",
+  },
+
+  Boats: {
+    name: "boats",
+    attr: "Boats",
+    family: false,
+    scope: "account",
+    agg: null,
+    governs: null,
+    shape: "nested",
+    parse: "json",
+    desc: "One row per boat. Row = [captainIdx, island, ?, upgradeA, ?, upgradeB].",
+    idx: {
+      0: "captain index into Captains, or -1 for none. CaptBonusCalc(stat, Boats[b][0]) returns 0 when <0.",
+      1: "island the boat is assigned to.",
+      2: "set to round(200+Boats[b][1])/100 when the chest pile is full; AddChest(b,2,..) reads round(100*(Boats[b][2]-2)). Chest-overflow bookkeeping.",
+      3: "boat upgrade level (Davey Jones gate: floor((Boats[b][3]+Boats[b][5]+99600)/1e5) — i.e. [3]+[5] >= 400 flips the gate to 1).",
+      5: "second boat upgrade level; pairs with [3] in the DaveyJonesBonus gate.",
+    },
+    evidence: "N.js _customBlock_Sailing(\"DaveyJonesBonus\") reads Boats[b][3] and Boats[b][5]; \"BoatArtiMulti\" passes Boats[b][0] to CaptBonusCalc; _customBlock_AddChest writes Boats[d][1]/[2]/[4].",
+    confidence: "confirmed",
+  },
+
+  Captains: {
+    name: "captains",
+    attr: "Captains",
+    family: false,
+    scope: "account",
+    agg: null,
+    governs: null,
+    shape: "nested",
+    parse: "json",
+    desc: "One row per captain (34 rows here: fleet captains plus the daily shop offers). Row = [tier, statIdA, statIdB, level, xp, rollA, rollB]. Effect of a stat = level * roll, summed over BOTH slots (a captain may legally roll the same stat id twice).",
+    idx: {
+      0: "tier (0..6). Tier 6 captains are counted by NONdummies[60] for the artifact-find bonus.",
+      1: "stat id in slot A (0=Boat Speed, 1=Loot Value, 2=Cloud Discover, 3=Artifact Find, 4=Rare Chest).",
+      2: "stat id in slot B.",
+      3: "captain level. Multiplies BOTH rolls.",
+      4: "captain xp. Shop offers have xp 0 and level 1.",
+      5: "stored roll for slot A. Does NOT scale with level.",
+      6: "stored roll for slot B.",
+    },
+    evidence: "N.js _customBlock_CaptBonusCalc(d,b): `if(Captains[b][1]==d) bonus += Captains[b][3]*Captains[b][5]; if(Captains[b][2]==d) bonus += Captains[b][3]*Captains[b][6]; if(0>b) return 0`. Tier-6 count loop: `NONdummies[60]=0; for g in 0..min(30,Captains.length): if(6==Captains[g][0]) NONdummies[60]++`.",
+    confidence: "confirmed",
+  },
+
+  SailChests: {
+    name: "sailChests",
+    attr: "SailChests",
+    family: false,
+    scope: "account",
+    agg: null,
+    governs: null,
+    shape: "nested",
+    parse: "json",
+    desc: "The pile of unclaimed chests. Each chest FREEZES its artifact multiplier at generation time, so a chest's value reflects the account's BoatArtiMulti when it was created, not now.",
+    idx: {
+      0: "loot value. Multiplied by 1.85^rarity for rarity<5, or by a flat 20 at rarity 5 (Miracle).",
+      1: "island the chest came from (or a random island index for the -113 special case).",
+      2: "the chest's artifact multiplier: max(1, BoatArtiMulti(boat)) at generation, then multiplied by 1.4^rarity for rarity<5, or by a flat 30 at rarity 5 (Miracle).",
+      3: "rarity 0..5 (0=Basic, 1=Iron, 2=Gilded, 3=Noble, 4=Occult, 5=Miracle).",
+      4: "pushed as 0 at generation; purpose not established.",
+    },
+    evidence: "N.js _customBlock_AddChest (~line 17748) builds AddChestzDL = [BoatValue, island, max(1,Sailing(\"BoatArtiMulti\",d,0)), randomFloat(), 0]; then AddChestzDL[3] /= (1+(CaptBonusCalc(4,Boats[d][0])+Sailing(\"ArtifactBonus\",9,1))/200) and is bucketed to a rarity by the thresholds 1e-8/2.3e-4/.006/.04/.2; then `5>[3] ? ([0]*=1.85^[3], [2]*=Math.pow(1.4,[3])) : ([0]=20*[0], [2]=30*[2])`.",
+    confidence: "confirmed",
+  },
+};
