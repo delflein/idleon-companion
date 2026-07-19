@@ -1,6 +1,11 @@
 <script setup>
 // M1 hello-shell — real dashboard content lands in M5+ as pages migrate off the legacy
 // root *.html files (docs/ARCHITECTURE.md migration plan).
+
+// M2 proof-of-bundle: a deliberate, temporary import of the ported framework-free core (see
+// docs/ARCHITECTURE.md M2) — proves the whole src/core/ + src/gamedata/ tree bundles under Vite,
+// not just node --check. Remove once a real page imports the core for its own reasons.
+import { RECIPES } from "../core/stats/index.mjs";
 </script>
 
 <template>
@@ -16,5 +21,6 @@
       </RouterLink> to verify the CORS-facing save-sync
       network calls run from this origin before any real feature is built on them.
     </p>
+    <p>core: {{ RECIPES.length }} recipes loaded</p>
   </section>
 </template>

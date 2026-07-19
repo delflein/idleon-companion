@@ -4,8 +4,8 @@
  */
 import { DatabaseSync } from "node:sqlite";
 import { gzipSync, gunzipSync } from "node:zlib";
-import { extractEntities, metricsFrom } from "./domain.mjs";
-import { SKILL } from "./savemap.mjs";
+import { extractEntities, metricsFrom } from "./src/core/domain.mjs";
+import { SKILL } from "./src/core/savemap.mjs";
 
 const SKILL_NAMES = Object.keys(SKILL);
 

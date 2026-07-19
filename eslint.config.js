@@ -15,9 +15,10 @@ export default defineConfig([
     // reference clone. `eslint .` walks the whole repo by default, so without these the linter
     // would sweep N.js (24 MB decompiled client) and OOM, plus flag code this package doesn't own.
     "idleon-toolbox/**",
-    "stats/**",
-    "bonuses/**",
-    "savemap/**",
+    // M2 (docs/ARCHITECTURE.md): stats/, bonuses/, savemap/ moved under src/core/, ported
+    // legacy style — still not this package's lint surface, just relocated.
+    "src/core/**",
+    "src/gamedata/**",
     "scripts/**",
     "*.mjs",
     "*.js",
