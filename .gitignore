@@ -22,3 +22,6 @@ idleon_index.html
 # IdleonToolbox reference clone (MIT, github.com/Morta1/IdleonToolbox) — used as an INDEX of
 # which terms feed a stat and for lifting data tables; formulas verified in N.js before trust.
 idleon-toolbox/
+
+# SPA/PWA build output (docs/ARCHITECTURE.md) — .github/workflows/deploy.yml builds this fresh.
+dist/
