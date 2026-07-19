@@ -12,12 +12,13 @@
  * feed every stat evaluation — the exact statInputs()/statOpts() contract ported from
  * companion.mjs: blank string = null = honestly unknown, NEVER guessed (README honesty rule).
  */
-import { shallowRef, markRaw, reactive } from "vue";
+import { shallowRef, markRaw, reactive, computed, ref } from "vue";
 import { openSave } from "../core/savemap.mjs";
 import { db, latestSnapshot, getRaw, getSetting, setSetting } from "./db.js";
-import { ingest } from "./ingest.js";
+import { ingest, history } from "./ingest.js";
 import { ingestInWorker, workerAvailable } from "./workerClient.js";
 import { fetchSave } from "./sync.js";
+import { deriveEntities, deriveMetrics, deriveStats, deriveFarming } from "./derived.js";
 
 /** The current snapshot in memory, or null before init()/first sync. */
 export const state = shallowRef(null);
@@ -84,6 +85,8 @@ export async function setStatInput(key, value) {
 /**
  * Parse the manual inputs into evaluate() opts — companion.mjs's statOpts() verbatim in behaviour.
  * Blank stays null so the engine reports the dependent term unknown rather than fabricating a value.
+ * Reads the reactive `statInputs`, so the derived computeds below track it and re-evaluate when the
+ * user edits an input.
  */
 export function statOpts() {
   const t = statInputs.statTomePoints;
@@ -94,4 +97,49 @@ export function statOpts() {
     labConnectedIds: lab !== "" ? lab.split(",").map((x) => Number(x.trim())).filter(Number.isFinite) : null,
     activeVote: vote !== "" && isFinite(Number(vote)) ? Number(vote) : null,
   };
+}
+
+/* ---------- derived computeds (docs/ARCHITECTURE.md D1: parse once, derive many) ----------
+ * The single seam where the framework-free derivation layer (derived.js, mirrors the old REST
+ * endpoints) meets Vue reactivity. Each is a lazy, cached computed() over the current save +
+ * statOpts() — a page reads these INSTEAD of the fetch('/api/X') it used against the old server.
+ * `stats`/`farming` track statInputs (via statOpts()), so editing a manual input re-evaluates
+ * exactly the panels that depend on it, nothing else. */
+
+/** `/api/state` snapshot.entities — the per-system entity tree (numbers pages render). */
+export const entities = computed(() => (state.value ? deriveEntities(state.value.raw, state.value.charNames) : null));
+
+/** `/api/state` snapshot.metrics — the flat {key:number} map (derived off `entities`, not re-parsed). */
+export const metrics = computed(() => (entities.value ? deriveMetrics(entities.value) : null));
+
+/** `/api/stats` .stats — every recipe evaluated per-char, with the manual inputs applied. Default
+ * (Explorer) villager; a page needing a specific villager's breakdown calls derived.deriveStats
+ * directly with { villager, ...statOpts() }. */
+export const stats = computed(() => (state.value ? deriveStats(state.value.save, statOpts()) : null));
+
+/** `/api/farming` .report — the four-module farming report. */
+export const farming = computed(() => (state.value ? deriveFarming(state.value.save, statOpts()) : null));
+
+/* ---------- history (charts) ----------
+ * The time-series stays in Dexie (ingest.js's history()); pages that chart a metric call this to
+ * async-load {key:[{ts,v}]} into a ref. Reload after a sync/rebuild via the returned reload().
+ */
+/**
+ * @param {string[]|null} keys metric keys to load (null = all — the rare full-scan path)
+ * @param {string|null} [from] inclusive ISO lower bound
+ * @returns {{ series: import('vue').Ref<object>, loading: import('vue').Ref<boolean>, reload: () => Promise<void> }}
+ */
+export function useHistory(keys, from = null) {
+  const series = ref({});
+  const loading = ref(false);
+  async function reload() {
+    loading.value = true;
+    try {
+      series.value = await history(db, keys, from);
+    } finally {
+      loading.value = false;
+    }
+  }
+  reload();
+  return { series, loading, reload };
 }
