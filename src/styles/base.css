@@ -1,0 +1,134 @@
+/* src/styles/base.css — M4 shared UI kit design language.
+ *
+ * Ported from companion.css (repo root, legacy pages' shared stylesheet — read in full for
+ * this migration, see docs/migration/survey-pages.md). This is a DELIBERATE SUBSET, not a
+ * wholesale import (legacy pages keep their own companion.css copy, per file-ownership rules):
+ *
+ * - Kept: the design tokens (CSS custom properties) for ONE tone ("Timber", the default) plus
+ *   every class src/ui/** components actually render — .px sprite images, chips, KPI tiles/
+ *   cards, panels, tables (incl. sortable headers), bars/levers, the sparkline/history-chart
+ *   wrapper + tooltip, show-more button, the "lower bound" honesty-contract caveat box, and the
+ *   dim/expander/note/expr/where micro-styles the recipe-module rows use.
+ * - Dropped (legacy-only, not a src/ui/ concern yet): the 5-tone picker + ui.js options panel,
+ *   header/nav dropdown chrome (world pills, Account/Stats flyouts — that's App.vue/M5 nav
+ *   territory), the Steam-SSO modal, drag-drop zone, and checklist/advisor layout (dashboard-
+ *   specific, not a reusable component here). Multi-tone theming can come back later as a
+ *   `data-tone` attribute on this same token set if a future package wants it — the variable
+ *   names are kept identical to companion.css on purpose so that port is a paste, not a rewrite.
+ */
+
+:root {
+  color-scheme: dark;
+  --page: #191006;
+  --glow: rgba(240, 182, 73, .05);
+  --surface-1: #271c10;
+  --surface-2: #332514;
+  --well: rgba(0, 0, 0, .18);
+  --ink-1: #f6ead2;
+  --ink-2: #d3c0a0;
+  --ink-muted: #a08a68;
+  --border: #4a3418;
+  --border-soft: rgba(246, 234, 210, .10);
+  --grid: #3a2a16;
+  --baseline: #4a3418;
+  --track: #3a2a16;
+  --accent: #f0b649;
+  --accent-ink: #2a1a04;
+  --series-1: #3d95e2;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+  --gap: 13px;
+}
+
+/* ---------- base ---------- */
+img.px { image-rendering: pixelated; vertical-align: middle; flex: none; }
+
+/* ---------- chips (Chip.vue) ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { font-size: 11.5px; font-weight: 650; background: var(--well); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; color: var(--ink-2); white-space: nowrap; }
+.chip b { color: var(--ink-1); }
+.chip.live { color: var(--good); border-color: rgba(12, 163, 12, .6); }
+.chip.dead { color: var(--ink-muted); opacity: .55; text-decoration: line-through; }
+.chip.soon { color: var(--warning); border-color: rgba(250, 178, 25, .6); }
+.chip.user { color: var(--accent); border-color: var(--accent); }
+.chip.pc { color: var(--ink-2); }
+
+/* ---------- KPI tiles / cards ---------- */
+.kpis, .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--gap); }
+.kpis.five { grid-template-columns: repeat(5, 1fr); }
+@media (max-width: 940px) { .kpis, .kpis.five, .cards { grid-template-columns: repeat(2, 1fr); } }
+.tile {
+  background: var(--surface-1); border: 2px solid var(--border); border-radius: 14px; padding: 11px 13px;
+  box-shadow: inset 0 1px 0 var(--border-soft);
+}
+.tile:has(> img.px) { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto auto; column-gap: 10px; }
+.tile > .px { grid-row: 1 / span 3; align-self: center; width: 28px; height: 28px; }
+.tile .label { color: var(--ink-muted); font-size: 11.5px; font-weight: 650; }
+.tile .value { font-size: 22px; font-weight: 800; color: var(--accent); }
+.tile .value .of { font-size: 13px; color: var(--ink-muted); font-weight: 600; }
+.tile .sub { color: var(--ink-2); font-size: 11.5px; }
+.up { color: var(--good); font-weight: 650; }
+.down { color: var(--ink-muted); }
+
+/* ---------- panels (StatModule host) ---------- */
+section.panel {
+  background: var(--surface-1); border: 2px solid var(--border); border-radius: 16px; padding: 15px 17px;
+  box-shadow: inset 0 1px 0 var(--border-soft);
+}
+section.panel h2 { font-size: 15px; font-weight: 800; color: var(--accent); margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+section.panel h2 .hint { font-weight: 500; color: var(--ink-muted); font-size: 11.5px; }
+section.panel.pending { opacity: .6; }
+section.panel.pending h2 { color: var(--ink-muted); }
+.pill-pending { font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: var(--warning); border: 1px solid rgba(250,178,25,.5); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+
+/* ---------- tables (DataTable.vue, StatModule's term table) ---------- */
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: 12.5px; }
+th { text-align: left; color: var(--accent); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; padding: 0 10px 7px 0; border-bottom: 2px solid var(--border); white-space: nowrap; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink-1); }
+td { padding: 6px 10px 6px 0; border-bottom: 1px solid var(--grid); white-space: normal; vertical-align: top; }
+td.num, th.num { text-align: right; }
+tr.dim td { color: var(--ink-muted); opacity: .8; }
+td.strong { font-weight: 800; }
+
+/* term rows (StatTermRow.vue) — expander/parts/note/expr/where, ported byte-for-byte from
+ * mining.html / sneaking.html's shared <style> block (bucketTerms/termRow renderer). */
+tr.expander { cursor: pointer; }
+tr.expander:hover td { background: var(--glow); }
+tr.parts td { border-bottom: none; padding-top: 0; }
+.partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+.note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+.expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+.where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+
+/* ---------- show-more (ShowMore.vue) ---------- */
+.showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+
+/* ---------- lower-bound honesty caveat (StatModule.vue) ---------- */
+.lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; }
+
+/* ---------- locked/unknown folds ---------- */
+details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+ul.unknowns li { margin-bottom: 3px; }
+
+/* ---------- bars & levers (LevelBar.vue) ---------- */
+.bar-bg { background: var(--track); border-radius: 4px; height: 8px; min-width: 70px; overflow: hidden; }
+.bar-fill { background: var(--series-1); height: 100%; border-radius: 0 4px 4px 0; }
+
+/* ---------- inputs (per-char selector) ---------- */
+select, input[type="text"] { background: var(--well); color: var(--ink-1); border: 1.5px solid var(--border); border-radius: 8px; padding: 4px 9px; font: inherit; font-size: 12.5px; }
+select.inlinesel { font-size: 12px; }
+
+/* ---------- sparkline / time chart ---------- */
+svg.spark { vertical-align: middle; }
+.hchart { background: var(--well); border: 1.5px solid var(--border); border-radius: 12px; padding: 10px 12px 6px; }
+.hchart .nm { font-size: 12px; color: var(--ink-2); font-weight: 650; }
+.hchart .cur { font-size: 16px; font-weight: 800; }
+.tooltip { position: fixed; pointer-events: none; z-index: 10; display: none; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--surface-2); border: 2px solid var(--border); border-radius: 10px; padding: 6px 9px; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
+.tooltip.open { display: block; }
+
+.err { color: var(--critical); }
