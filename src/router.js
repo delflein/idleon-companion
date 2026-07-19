@@ -5,6 +5,7 @@ export const router = createRouter({
   history: createWebHashHistory(),
   routes: [
     { path: "/", name: "home", component: () => import("./pages/HomePage.vue") },
+    { path: "/data", name: "data", component: () => import("./pages/DataPage.vue") },
     { path: "/sync-spike", name: "sync-spike", component: () => import("./pages/SyncSpike.vue") },
   ],
 });

@@ -2,6 +2,7 @@
 .idleon-auth.json
 
 # Personal save data & derived history
+idleon-export*.json.gz
 idleon.db
 idleon.db-shm
 idleon.db-wal

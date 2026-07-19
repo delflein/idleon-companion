@@ -13,6 +13,9 @@
         <RouterLink to="/">
           Home
         </RouterLink>
+        <RouterLink to="/data">
+          Data
+        </RouterLink>
         <RouterLink to="/sync-spike">
           Sync spike
         </RouterLink>
