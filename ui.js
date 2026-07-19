@@ -29,7 +29,7 @@
 
   /* sprite helper — files live in the bundled toolbox assets, served by companion.mjs */
   function sprite(file, size, dir = "data", cls = "") {
-    return `<img class="px ${cls}" src="/idleon-toolbox/public/${dir}/${file}.png" alt="" width="${size}" height="${size}" loading="lazy">`;
+    return `<img class="px ${cls}" src="/public/assets/${dir}/${file}.png" alt="" width="${size}" height="${size}" loading="lazy">`;
   }
 
   /* options panel — mounts into <span id="uiOptions"></span> in the header */

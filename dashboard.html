@@ -14,7 +14,7 @@
 </head>
 <body>
 <header class="app">
-  <h1><img class="px" src="/idleon-toolbox/public/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Command Center</h1>
+  <h1><img class="px" src="/public/assets/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Command Center</h1>
   <nav class="pages"></nav>
   <div class="meta" id="meta">no data loaded</div>
   <div class="spacer"></div>
@@ -311,7 +311,7 @@ function buildAdvice(m) {
   });
   // 8 caverns (if not maxed)
   if (m.caverns < REF.cavernCount) A.push({
-    icon: ["Cavern_0", "data"],
+    icon: ["Cavern_0", "etc"],
     t:`Caverns: ~${m.caverns}/${REF.cavernCount} unlocked`,
     why:"The 2026 caverns (Fountain, Bottomless Trench, Glunko Cove) sit at the end — cavern resources are a 750-pt Tome line and villagers compound weekly.",
     act:"Spend opals on Explorer first; push your deepest cavern each week after Gambit/Monument resets.",
@@ -364,7 +364,7 @@ function tiles(m, hist) {
     ["ClassIcons14|data", "Account LV", fmt(m.accountLv), (m.chars.length+" characters")+delta("accountLv")],
     ["Sailing_Skill_0|etc", "Skills LV", fmt(m.skillsLv), "all characters"+delta("skillsLv")],
     ["aJarB0|data", "Total Bubble LV", fmt(m.bubbleLv), "Tome line #1"+delta("bubbleLv")],
-    ["Rift_0|data", "Rift", fmt(m.rift), "Cooking Mastery unlocked"],
+    ["Rift_0|etc", "Rift", fmt(m.rift), "Cooking Mastery unlocked"],
     ["Equinox_Mirror|etc", "Equinox dreams", of(m.dreamsDone, REF.dreamTotal), delta("dreamsDone")||"&nbsp;"],
     ["Ribbon0|data", "Achievements", of(m.achievesDone, REF.achieveTotal), delta("achievesDone")||"&nbsp;"],
     ["Ribbon23|data", "Emperor", fmt(m.emperorShowdown), "showdowns · "+m.emperorAttempts+" banked"],
