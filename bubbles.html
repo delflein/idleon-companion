@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bubbles — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/AlchBarF1.png" alt="" width="26" height="26">Bubbles</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="bubblesPanel" style="display:none"></section>
+<div id="rmod_krukBubbles"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let DATA = null;    // /api/stats payload
+let GLOSS = null;   // /api/w2 static glossary
+let SERIES = {};    // metric key -> [{ts,v}]
+let W2 = null;      // SNAP.entities.w2 shortcut
+
+const CAULDRON_LABELS = ["Power", "Quicc", "High-IQ", "Kazam"];
+
+/* ---------- module state ---------- */
+let BUBBLE_TAB = 0;
+let BUBBLE_SHOWALL = { 0: false, 1: false, 2: false, 3: false };
+
+/* ---------- generic helpers (same as w2.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const niceItem = (s) => String(s ?? "")
+  .replace(/_/g, " ")
+  .replace(/([a-z])([A-Z])/g, "$1 $2")
+  .replace(/([A-Za-z])(\d)/g, "$1 $2")
+  .trim();
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip (Bubbles slice of w2.html's renderTiles).
+ * ============================================================================================ */
+function renderTiles() {
+  const bubblesReal = W2.bubbles.flat().filter((b) => !b.filler);
+  const bubblesLeveled = bubblesReal.filter((b) => b.level > 0).length;
+
+  const tiles = [
+    ["AlchBarF1|data", "Bubbles leveled", `${bubblesLeveled}<span class="of">/${bubblesReal.length}</span>`,
+      `NBLB: ${(W2.nblb.lowerBound ? "≥ " : "") + fmt(W2.nblb.bubblesLeveledPerDay)} LVs/day, auto`],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Bubbles: per-cauldron table, level-desc sorted, cap+show-more, NBLB tile.
+ * ============================================================================================ */
+function bubbleGlossMap(cauldron) {
+  const m = new Map();
+  for (const e of (GLOSS?.bubbleEffects || [])) if (e.cauldron === cauldron) m.set(e.idx, e);
+  return m;
+}
+
+function bubbleRowHtml(b, gloss) {
+  const g = gloss.get(b.idx);
+  const activeBadge = b.active ? '<span class="chip user" title="Only applies while equipped on your active character (or with the universal companion unlock).">ACTIVE</span>' : "";
+  return `<tr>
+    <td><b>${niceItem(b.name)}</b> ${activeBadge}</td>
+    <td style="text-align:right">Lv ${b.level}</td>
+    <td style="text-align:right">${b.level > 0 ? "+" + fmt(b.bonus) : "—"}</td>
+    <td class="note">${g ? g.desc : ""}</td>
+    <td>${chip(b.status)}</td>
+  </tr>`;
+}
+
+function renderBubbles() {
+  const rowsAll = (W2.bubbles[BUBBLE_TAB] || []).filter((b) => !b.filler)
+    .slice().sort((a, b) => b.level - a.level || a.idx - b.idx);
+  const gloss = bubbleGlossMap(BUBBLE_TAB);
+  const showAll = !!BUBBLE_SHOWALL[BUBBLE_TAB];
+  const rows = showAll ? rowsAll : rowsAll.slice(0, 12);
+  const leveledCounts = CAULDRON_LABELS.map((_, ci) =>
+    (W2.bubbles[ci] || []).filter((b) => !b.filler && b.level > 0).length);
+  const totalCounts = CAULDRON_LABELS.map((_, ci) => (W2.bubbles[ci] || []).filter((b) => !b.filler).length);
+
+  $("bubblesPanel").style.display = "";
+  $("bubblesPanel").innerHTML = `
+    <h2>Bubbles <span class="hint">Level and current bonus for every bubble you've grown, across all 4 cauldrons — highest level first.
+      <span class="tip" title="ACTIVE bubbles (the 'big' ones) only give their bonus while equipped on your active character's Cauldron Bubbles loadout, or once you own the universal companion unlock. The bonus shown here is the value IF equipped.">ⓘ</span></span></h2>
+    <div class="tabs" id="bubbleTabs">
+      ${CAULDRON_LABELS.map((label, i) => `<button class="f${BUBBLE_TAB === i ? " active" : ""}" data-tab="${i}">${label} (${leveledCounts[i]}/${totalCounts[i]})</button>`).join("")}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Bubble</th><th style="text-align:right">Level</th><th style="text-align:right">Bonus</th><th>Effect</th><th>Status</th></tr>
+      ${rows.map((b) => bubbleRowHtml(b, gloss)).join("")}
+    </table></div>
+    ${rowsAll.length > 12 ? `<button class="showmore" id="bubbleShowMore">${showAll ? "show fewer" : `show ${rowsAll.length - 12} more`}</button>` : ""}
+    <div class="cards" style="margin-top:12px">
+      <div class="tile">${UI.sprite("KrukPart", 28, "data")}
+        <div class="label">NBLB <span class="tip" title="No-Bubble-Left-Behind: Kattlekruk automatically levels up bubbles you haven't grown in a while, once per day, for free — no materials spent, no action needed.">ⓘ</span></div>
+        <div class="value">${(W2.nblb.lowerBound ? "≥ " : "") + fmt(W2.nblb.bubblesLeveledPerDay)}<span class="of">LVs/day</span></div>
+        <div class="sub"><a href="#mod_krukBubbles">full breakdown ↓</a></div>
+      </div>
+    </div>
+  `;
+  wireBubbles();
+}
+
+function wireBubbles() {
+  document.querySelectorAll("#bubbleTabs button").forEach((b) => b.onclick = () => {
+    BUBBLE_TAB = Number(b.dataset.tab); renderBubbles();
+  });
+  const more = $("bubbleShowMore");
+  if (more) more.onclick = () => { BUBBLE_SHOWALL[BUBBLE_TAB] = !BUBBLE_SHOWALL[BUBBLE_TAB]; renderBubbles(); };
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for krukBubbles — same pattern as w1-w5.html's RECIPE_MODULES.
+ * ============================================================================================ */
+let CHARSEL = {};
+let SHOWALL = {};
+
+const RECIPE_MODULES = [
+  { name: "krukBubbles", title: "Bubble Levels / Day (NBLB)", icon: ["KrukPart", "data"],
+    blurb: "Every source that adds to Kattlekruk's daily auto-leveling — base rate, stamps, talents, meritocracy, event shop, bubbles, arcade." },
+];
+
+const chipTerm = chip;
+
+function currentResult(cfg, st) {
+  const sel = CHARSEL[cfg.name] || "account";
+  if (sel !== "account" && st.byChar) {
+    const c = st.byChar.find((x) => String(x.charIdx) === sel);
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="${parts.length ? "expander" : ""}" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:320px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${rawVal}</td>
+      <td>${chipTerm(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function lockedRow(t, disp) {
+  const d = disp[t.id] || {};
+  return `<tr class="dim">
+    <td style="max-width:320px"><b>${d.label || t.key}</b>${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+    <td style="text-align:right">—</td>
+    <td><span class="chip dead">locked/inactive</span></td>
+    <td></td>
+    <td class="note">${d.how || t.note || "Not contributing right now."}</td>
+  </tr>`;
+}
+
+function liveModuleHTML(cfg, st) {
+  if (!(cfg.name in CHARSEL)) CHARSEL[cfg.name] = "account";
+  const r = currentResult(cfg, st);
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked } = bucketTerms(r);
+  const unknownTerms = r.terms.filter((t) => t.status === "unknown");
+  const unknownCount = unknownTerms.length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const caveat = r.lowerBound ? `<div class="lowerbound">
+    <b>Lower bound.</b> ${unknownCount} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher.
+  </div>` : "";
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "×");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span></h2>
+    ${caveat}
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount}<span class="of">/${r.terms.length}</span></div><div class="sub">sources computed</div></div>
+      ${locked.length ? `<div class="tile"><div class="label">Locked / inactive</div><div class="value">${locked.length}</div><div class="sub">not contributing right now</div></div>` : ""}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${locked.length ? `<details class="fold" style="margin-top:6px"><summary>${locked.length} locked/inactive source${locked.length > 1 ? "s" : ""}</summary>
+      <div class="scroll"><table>${locked.map((t) => lockedRow(t, disp)).join("")}</table></div>
+    </details>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet.</p>
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander[data-mod]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w2) {
+      $("err").innerHTML = `No <code>w2</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W2 = SNAP.entities.w2;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w2")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdowns below.";
+
+    renderTiles();
+    renderBubbles();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

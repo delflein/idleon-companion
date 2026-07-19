@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Research Grid — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  select.inlinesel { font-size: 12px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .gapbox { border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; color: var(--ink-2); font-size: 12.5px; }
+  .gapbox h3 { font-size: 13px; color: var(--ink-1); margin-bottom: 6px; }
+  .occrow { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .occrow .bar { flex: 1; height: 8px; border-radius: 4px; background: var(--well); overflow: hidden; }
+  .occrow .bar > i { display: block; height: 100%; background: var(--accent); }
+  .occrow .n { width: 90px; font-size: 11.5px; color: var(--ink-2); text-align: right; }
+  .occrow .pct { width: 40px; font-size: 11.5px; color: var(--ink-muted); text-align: right; }
+  .toolgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .toolcard { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--ink-2); }
+  .toolcard b { display: block; color: var(--ink-1); font-size: 12px; margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/ResearchBG.png" alt="" width="26" height="26">Research Grid</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="occPanel" style="display:none"></section>
+<section class="panel" id="nodesPanel" style="display:none"></section>
+<section class="panel" id="toolsPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, DATA = null, GLOSS = null;
+let R = null;   // SNAP.entities.w7.research shortcut
+let SORT = "level";   // "level" | "impact" | "occurrence" — display-only goal selector
+let SHOWALL = false;
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const decodedPct = R.nodesPlaced ? Math.round(100 * R.decodedNodes / R.nodesPlaced) : 0;
+  const occActive = R.occurrences.filter((x) => x > 0).length;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("ResearchBG", 28, "data")}<div class="label">Nodes with a level placed</div><div class="value">${fmt(R.nodesPlaced)}</div><div class="sub">out of ~240 grid squares</div></div>
+    <div class="tile"><div class="label">Decoded identity</div><div class="value">${R.decodedNodes}<span class="of">/${R.nodesPlaced}</span></div><div class="sub">${decodedPct}% of placed nodes have a confirmed effect</div></div>
+    <div class="tile"><div class="label">Observations collected</div><div class="value">${fmt(R.observations)}</div><div class="sub">count of instances owned, not "of 32" — the 32-name pool allows duplicates; see reference below</div></div>
+    <div class="tile"><div class="label">Occurrence slots active</div><div class="value">${occActive}<span class="of">/10</span></div><div class="sub">tag types present on placed nodes</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Occurrence slot distribution — R.occurrences[i] = count of placed nodes tagged with slot i;
+ * RES_OCCURRENCE_PCT (baked into each node's occurrencePct) is the % bonus that tag applies.
+ * ============================================================================================ */
+const OCC_PCT = [25, 15, 50, 20, 20, 35, 25, 30, 35, 60];
+function renderOccurrences() {
+  const max = Math.max(1, ...R.occurrences);
+  $("occPanel").style.display = "";
+  $("occPanel").innerHTML = `
+    <h2>Occurrence Slots <span class="hint">Every grid node can carry one of 10 "occurrence" tags — how many PLACED nodes carry each tag, and the % bonus that tag grants those nodes.
+      <span class="tip" title="Occurrence tag is assigned per-node at runtime, same as node identity — this counts what's on the grid right now, it isn't a shopping list.">ⓘ</span></span></h2>
+    ${R.occurrences.map((n, i) => `<div class="occrow">
+      <span class="pct">+${OCC_PCT[i]}%</span>
+      <div class="bar"><i style="width:${Math.round(100 * n / max)}%"></i></div>
+      <span class="n">${n} node${n === 1 ? "" : "s"}</span>
+    </div>`).join("")}
+  `;
+}
+
+/* ============================================================================================
+ * Node table — one row per node with a level placed. Undecoded nodes show honestly as
+ * "node #N (undecoded)" — NO fabricated name/effect. Sort is a display-only goal selector:
+ * "impact" ranks decoded nodes by coeff x level (their actual bonus size) so a player chasing
+ * value can see what to push next; it never hardcodes which SYSTEM matters to them.
+ * ============================================================================================ */
+function nodeImpact(n) { return n.bonus != null ? n.bonus : -1; }
+function sortedNodes() {
+  const list = R.nodes.slice();
+  if (SORT === "level") list.sort((a, b) => b.level - a.level);
+  else if (SORT === "impact") list.sort((a, b) => nodeImpact(b) - nodeImpact(a));
+  else if (SORT === "occurrence") list.sort((a, b) => (b.occurrencePct || 0) - (a.occurrencePct || 0));
+  return list;
+}
+
+function nodeRowHtml(n) {
+  return `<tr>
+    <td><b>${n.decoded ? n.effectName : `node #${n.slot}`}</b>
+      ${!n.decoded ? `<span class="tip" title="This grid square's identity is assigned at runtime by the game client, not stored as a static table in N.js — the companion honestly can't name it without a confirmed reference. See the (i) at the top of this table for why."> <span class="chip">undecoded</span></span>` : ""}</td>
+    <td style="text-align:right">Lv ${fmt(n.level)}</td>
+    <td style="text-align:right">${n.bonus != null ? "+" + fmt(n.bonus) + "%" : "—"}</td>
+    <td style="text-align:right">${n.occurrence != null ? `+${n.occurrencePct}%` : "—"}</td>
+  </tr>`;
+}
+
+function renderNodes() {
+  const list = sortedNodes();
+  const rows = SHOWALL ? list : list.slice(0, 10);
+  $("nodesPanel").style.display = "";
+  $("nodesPanel").innerHTML = `
+    <h2>${UI.sprite("ResearchBG", 20, "data")} Grid Nodes <span class="hint">Every node you've put a level into. Node identity is assigned by the game client at runtime — there's no static "node → effect" table in N.js to read, so most nodes are honestly labeled "undecoded" rather than guessed.
+      <span class="tip" title="Confirmed via N.js: Ya.ResGridSquares() is a 240-row PLACEHOLDER literal (every row byte-identical). Real per-node names/effects are assigned into CustomLists.h.ResGridSquares at runtime — not resolvable by reading the client file. Only nodes independently cross-checked against real save/UI text are decoded.">ⓘ</span></span></h2>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span class="note">Sort:</span>
+      <select class="inlinesel" id="sortSel">
+        <option value="level" ${SORT === "level" ? "selected" : ""}>Level (highest first)</option>
+        <option value="impact" ${SORT === "impact" ? "selected" : ""}>Impact — decoded bonus size</option>
+        <option value="occurrence" ${SORT === "occurrence" ? "selected" : ""}>Occurrence tag %</option>
+      </select>
+      <span class="note">display order only — not a recommendation of what to level next.</span>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Node</th><th style="text-align:right">Level</th><th style="text-align:right">Bonus</th><th style="text-align:right">Occurrence</th></tr>
+      ${rows.map((n) => nodeRowHtml(n)).join("")}
+    </table></div>
+    ${list.length > 10 ? `<button class="showmore" id="nodesShowMore">${SHOWALL ? "show fewer" : `show ${list.length - 10} more`}</button>` : ""}
+    <div class="gapbox" style="margin-top:12px">
+      <h3>Farming stickers unlocked via this grid</h3>
+      <p>${(GLOSS?.farmingStickers ?? []).map((s) => `<b>${s.name}</b> (${s.kind === "mul" ? "×" + s.coeff : "+" + s.coeff + "%"}) — ${s.desc}`).join("<br>") || "no glossary data"}</p>
+    </div>
+  `;
+  const sel = $("sortSel");
+  if (sel) sel.onchange = (e) => { SORT = e.target.value; renderNodes(); };
+  const more = $("nodesShowMore");
+  if (more) more.onclick = () => { SHOWALL = !SHOWALL; renderNodes(); };
+}
+
+/* ============================================================================================
+ * Grid tools reference (shapes placed on nodes, lenses placed on observations) — flavor only,
+ * no save state (see stats/w7-report.mjs).
+ * ============================================================================================ */
+function renderTools() {
+  if (!GLOSS?.researchTools) { $("toolsPanel").style.display = "none"; return; }
+  const { shapes, lenses } = GLOSS.researchTools;
+  $("toolsPanel").style.display = "";
+  $("toolsPanel").innerHTML = `
+    <h2 class="subhead">Grid tools <span class="hint">Shapes (placed on the grid to boost highlighted nodes) and Lenses (placed on Observations) — reference only, no owned/equipped state in the save.</span></h2>
+    <div class="toolgrid" style="margin-bottom:10px">
+      ${shapes.map((s) => `<div class="toolcard"><b>${s.name}</b>${s.effect}</div>`).join("")}
+    </div>
+    <div class="toolgrid">
+      ${lenses.map((l) => `<div class="toolcard"><b>${l.name}</b>${l.desc}</div>`).join("")}
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w7) {
+      $("err").innerHTML = `No <code>w7</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    R = SNAP.entities.w7.research;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w7")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderOccurrences();
+    renderNodes();
+    renderTools();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

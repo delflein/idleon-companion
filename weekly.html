@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Weekly (Ballot/Killroy/Islands) — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  select.inlinesel { font-size: 12px; }
+  .chipbar { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/KillsSkull.png" alt="" width="26" height="26">Weekly (Ballot/Killroy/Islands)</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<div id="weeklyPanel">
+  <section class="panel" id="ballotPanel" style="display:none"></section>
+  <section class="panel" id="killroyPanel" style="display:none"></section>
+  <section class="panel" id="islandsPanel" style="display:none"></section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w2 static glossary
+let W2 = null;      // SNAP.entities.w2 shortcut
+
+/* ---------- module state ---------- */
+let KILLROY_SHOWALL = false;
+let VOTE_SHOWALL = false;
+let MERIT_SHOWALL = false;
+let VOTE_SORT = "idx";   // "idx" | "base"
+let MERIT_SORT = "idx";
+
+/* ---------- generic helpers (same as w2.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* Raw N.js flavor text used directly off entities (ballot categories, islands) still carries
+ * "{"/"}" value-placeholders and "_" for spaces — glossary text is pre-cleaned server-side
+ * (stats/w2-report.mjs), but entity-sourced text (ballot, killroy, islands) is not, so pages
+ * clean it the same way stamps effect text is cleaned in w1.html. */
+const cleanDesc = (s) => String(s ?? "").replace(/[{}]/g, "").replace(/_/g, " ").replace(/\s+/g, " ").trim();
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+/* ============================================================================================
+ * Top KPI strip. w2.html's renderTiles didn't allocate a slice to the weekly modules (ballot/
+ * killroy/islands weren't represented in the original 5-tile strip) — this strip is assembled
+ * from the same fields those modules already read off W2, not new/invented data.
+ * ============================================================================================ */
+function renderTiles() {
+  const b = W2.ballot;
+  const k = W2.killroy;
+  const islObj = W2.islands || {};
+  const islands = Array.isArray(islObj) ? islObj : (islObj.list || []);
+  const islandsUnlocked = islands.filter((i) => i.unlocked).length;
+  const fractalHours = (!Array.isArray(islObj) && typeof islObj.fractalAfkHours === "number") ? islObj.fractalAfkHours : null;
+
+  const tiles = [
+    ["KillsSkull|data", "Skulls banked", fmt(k.skulls), "spend in the Killroy shop below"],
+    ["VoteBG|data", "Meritocracy voting", b.canVote ? "unlocked" : "locked", "weekly-rotating account bonuses"],
+    ["IslandSail5|data", "Islands unlocked", `${islandsUnlocked}<span class="of">/${islands.length}</span>`,
+      fractalHours == null ? "Fractal AFK hours n/a" : `${fmt(fractalHours)} Fractal AFK hrs banked`],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Vote Ballot + Meritocracy (goal-selector framing: sort the preview, don't pick
+ * a "best" for the player — both rotate weekly and which one pays is out of the player's hands
+ * except for Meritocracy, which the save DOES record a selection for).
+ * ============================================================================================ */
+function ballotCatRow(c, activeIdx) {
+  return `<tr class="${c.idx === activeIdx ? "" : "dim"}">
+    <td>${c.idx === activeIdx ? '<span class="chip live">active</span>' : ""} <b>${cleanDesc(c.description)}</b></td>
+    <td style="text-align:right">${fmt(c.baseValue)}</td>
+  </tr>`;
+}
+
+function renderBallot() {
+  const b = W2.ballot;
+  const voteAll = b.vote.categories.slice().sort((x, y) => VOTE_SORT === "base" ? y.baseValue - x.baseValue : x.idx - y.idx);
+  const voteShown = VOTE_SHOWALL ? voteAll : voteAll.slice(0, 12);
+  const meritAll = b.meritocracy.categories.slice().sort((x, y) => MERIT_SORT === "base" ? y.baseValue - x.baseValue : x.idx - y.idx);
+  const meritShown = MERIT_SHOWALL ? meritAll : meritAll.slice(0, 12);
+
+  const voteActiveHtml = b.vote.active.idx != null
+    ? `<div class="rec"><b>Active vote:</b> ${cleanDesc(b.vote.active.description)} — base ${fmt(b.vote.active.baseValue)} × ${fmt(b.vote.active.multi)} bonus multi = <b>${fmt(b.vote.active.bonusValue)}</b>${b.vote.active.unread?.length ? ` <span class="tip" title="${b.vote.active.unread.length} bonus source(s) not yet decoded (Cosmo/Palette/Legend/Sushi) — real multiplier is a lower bound.">ⓘ</span>` : ""}</div>`
+    : `<div class="rec none"><b>Active vote not observed.</b> The Vote Ballot rotates weekly and isn't stored in your save — this repo reads it from a live sync's server-config snapshot; sync again while the ballot is showing in-game to capture it. Bonus multiplier from your own account sources: ×${fmt(b.vote.active.multi)}.</div>`;
+
+  const meritActiveHtml = b.meritocracy.active
+    ? `<div class="rec"><b>Active Meritocracy:</b> ${cleanDesc(b.meritocracy.active.description)} — base ${fmt(b.meritocracy.active.baseValue)} → <b>${fmt(b.meritocracy.active.bonusValue)}</b> ${chip(b.meritocracy.active.status)}</div>`
+    : `<div class="rec none">No Meritocracy category selected yet.</div>`;
+
+  $("ballotPanel").style.display = "";
+  $("ballotPanel").innerHTML = `
+    <h2>${UI.sprite("VoteBG", 20, "data")} Vote Ballot &amp; Meritocracy
+      <span class="hint">Weekly-rotating account bonuses. Meritocracy's selection is stored in your save; the Vote Ballot's active category is runtime server state captured at sync time.</span></h2>
+    <div class="chipbar"><span class="chip ${b.canVote ? "live" : "dead"}">${b.canVote ? "Meritocracy voting unlocked" : "Meritocracy voting locked"}</span></div>
+
+    <h2 class="subhead">Vote Ballot</h2>
+    ${voteActiveHtml}
+    <p class="note">All ${voteAll.length} categories — for planning which weeks are worth extra attention.
+      <select class="inlinesel" id="voteSort"><option value="idx" ${VOTE_SORT === "idx" ? "selected" : ""}>Sort by category #</option><option value="base" ${VOTE_SORT === "base" ? "selected" : ""}>Sort by base bonus</option></select></p>
+    <div class="scroll"><table><tr><th>Category</th><th style="text-align:right">Base bonus</th></tr>${voteShown.map((c) => ballotCatRow(c, b.vote.active.idx)).join("")}</table></div>
+    ${voteAll.length > 12 ? `<button class="showmore" id="voteShowMore">${VOTE_SHOWALL ? "show fewer" : `show ${voteAll.length - 12} more`}</button>` : ""}
+
+    <h2 class="subhead" style="margin-top:14px">Meritocracy</h2>
+    ${meritActiveHtml}
+    <p class="note">All ${meritAll.length} categories.
+      <select class="inlinesel" id="meritSort"><option value="idx" ${MERIT_SORT === "idx" ? "selected" : ""}>Sort by category #</option><option value="base" ${MERIT_SORT === "base" ? "selected" : ""}>Sort by base bonus</option></select></p>
+    <div class="scroll"><table><tr><th>Category</th><th style="text-align:right">Base bonus</th></tr>${meritShown.map((c) => ballotCatRow(c, b.meritocracy.selectedIdx)).join("")}</table></div>
+    ${meritAll.length > 12 ? `<button class="showmore" id="meritShowMore">${MERIT_SHOWALL ? "show fewer" : `show ${meritAll.length - 12} more`}</button>` : ""}
+  `;
+  wireBallot();
+}
+
+function wireBallot() {
+  const vs = $("voteSort"); if (vs) vs.onchange = (e) => { VOTE_SORT = e.target.value; renderBallot(); };
+  const ms = $("meritSort"); if (ms) ms.onchange = (e) => { MERIT_SORT = e.target.value; renderBallot(); };
+  const vm = $("voteShowMore"); if (vm) vm.onclick = () => { VOTE_SHOWALL = !VOTE_SHOWALL; renderBallot(); };
+  const mm = $("meritShowMore"); if (mm) mm.onclick = () => { MERIT_SHOWALL = !MERIT_SHOWALL; renderBallot(); };
+}
+
+/* ============================================================================================
+ * MODULE — Killroy: skull balance, implemented permanent bonuses, shop (cheapest first).
+ * ============================================================================================ */
+function renderKillroy() {
+  const k = W2.killroy;
+  const shopAll = k.shop.slice().sort((a, b) => a.skullCost - b.skullCost);
+  const shown = KILLROY_SHOWALL ? shopAll : shopAll.slice(0, 12);
+
+  $("killroyPanel").style.display = "";
+  $("killroyPanel").innerHTML = `
+    <h2>${UI.sprite("KillsSkull", 20, "data")} Killroy <span class="hint">Skulls drop from monster kills; spend them in the shop below — cheapest first.</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("KillsSkull", 28, "data")}<div class="label">Skulls banked</div><div class="value">${fmt(k.skulls)}</div></div>
+      <div class="tile"><div class="label">Artifact Find bonus</div><div class="value">×${fmt(k.artifactFindBonus)}</div><div class="sub">from Killroy shop row 11</div></div>
+      <div class="tile"><div class="label">Crop Evolution bonus</div><div class="value">×${fmt(k.cropEvoBonus)}</div><div class="sub">from Killroy shop row 13</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Reward</th><th style="text-align:right">Skull cost</th></tr>
+      ${shown.map((r) => `<tr><td>${cleanDesc(r.description)}</td><td style="text-align:right">${fmt(r.skullCost)}</td></tr>`).join("")}
+    </table></div>
+    ${shopAll.length > 12 ? `<button class="showmore" id="killroyShowMore">${KILLROY_SHOWALL ? "show fewer" : `show ${shopAll.length - 12} more`}</button>` : ""}
+  `;
+  const more = $("killroyShowMore");
+  if (more) more.onclick = () => { KILLROY_SHOWALL = !KILLROY_SHOWALL; renderKillroy(); };
+}
+
+/* ============================================================================================
+ * MODULE — Islands: unlock summary + Fractal AFK hours (static banked number, no timers).
+ * ============================================================================================ */
+function renderIslands() {
+  /* w2.islands is {list, fractalAfkHours} (domain.mjs). Older snapshots stored it as a bare array
+   * (with fractalAfkHours dropped by JSON.stringify) — tolerate both shapes. */
+  const islObj = W2.islands || {};
+  const islands = Array.isArray(islObj) ? islObj : (islObj.list || []);
+  const fractalHours = (!Array.isArray(islObj) && typeof islObj.fractalAfkHours === "number") ? islObj.fractalAfkHours : null;
+  const thresholds = GLOSS?.fractalThresholds || [];
+  const nextIdx = fractalHours == null ? -1 : thresholds.findIndex((t) => t > fractalHours);
+  const next = nextIdx === -1 ? null : thresholds[nextIdx];
+  const prevDone = fractalHours == null ? 0 : thresholds.filter((t) => t <= fractalHours).length;
+
+  const rows = islands.map((isl) => `<tr>
+    <td>${UI.sprite("IslandSail" + isl.idx, 22, "data")} <b>${isl.name}</b></td>
+    <td class="note">${cleanDesc(isl.description)}</td>
+    <td><span class="chip ${isl.unlocked ? "live" : "dead"}">${isl.unlocked ? "unlocked" : "locked"}</span></td>
+  </tr>`).join("");
+
+  $("islandsPanel").style.display = "";
+  $("islandsPanel").innerHTML = `
+    <h2>${UI.sprite("IslandSail5", 20, "data")} Islands <span class="hint">The 6 W2 coastal minigame islands (unrelated to Sailing's islands) — unlocked once, then each runs its own daily/weekly shop.</span></h2>
+    <div class="scroll"><table><tr><th>Island</th><th>What it does</th><th>Status</th></tr>${rows}</table></div>
+    <div class="cards" style="margin-top:10px">
+      <div class="tile">${UI.sprite("IslandSail5", 28, "data")}
+        <div class="label">Fractal AFK hours <span class="tip" title="Time Candy dumped into the Fractal Island banks toward permanent account bonuses (e.g. Sailing artifact-find chance) at fixed hour thresholds — no daily action needed, it's a one-time deposit ladder.">ⓘ</span></div>
+        <div class="value">${fractalHours == null ? "—" : fmt(fractalHours)}<span class="of">hrs banked</span></div>
+        <div class="sub">${fractalHours == null ? "not available on this snapshot (pre-fix entity) — re-sync to populate" : next != null ? `${prevDone}/${thresholds.length} thresholds cleared — next at ${fmt(next)}h` : `all ${thresholds.length} thresholds cleared`}</div>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w2) {
+      $("err").innerHTML = `No <code>w2</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W2 = SNAP.entities.w2;
+
+    const glossRes = await fetch("/api/w2");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderBallot();
+    renderKillroy();
+    renderIslands();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

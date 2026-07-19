@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cauldron &amp; Liquids — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .cardgrid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: var(--gap); margin-bottom: 12px; }
+  .p2wcard { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .p2wcard h3 { font-size: 12.5px; font-weight: 800; color: var(--accent); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/Liquid1_x1.png" alt="" width="26" height="26">Cauldron &amp; Liquids</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="cauldronPanel" style="display:none"></section>
+<div id="liquidCapBreakdown"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let DATA = null;    // /api/stats payload
+let SERIES = {};    // metric key -> [{ts,v}]
+let W2 = null;      // SNAP.entities.w2 shortcut
+
+/* ---------- generic helpers (same as w2.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const titleCase = (s) => String(s ?? "").toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip (Liquid cap slice of w2.html's renderTiles).
+ * ============================================================================================ */
+function renderTiles() {
+  const cap0 = W2.liquids[0];
+
+  const tiles = [
+    ["Liquid1_x1|data", "Liquid cap (Water Droplets)", (cap0.capacityLowerBound ? "≥ " : "") + fmt(cap0.capacity), "see all 4 liquids below"],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Cauldron P2W ladders + Liquids (capacity, regen/cap P2W levels) + liquidCap embed.
+ * ============================================================================================ */
+function p2wLever(label, axis, max) {
+  const pct = max ? Math.max(0, Math.min(100, (axis.level / max) * 100)) : 0;
+  return `<div class="lever">
+    <span class="lname">${label}</span>
+    <div class="lbar"><div class="lfill" style="width:${pct}%"></div></div>
+    <span class="lval">Lv ${axis.level}${max ? `<span class="of">/${max}</span>` : ""} · +${fmt(axis.bonus)}</span>
+  </div>`;
+}
+
+function renderCauldronLiquids() {
+  const p2w = W2.cauldronP2W;
+  const cards = p2w.map((c) => `
+    <div class="p2wcard">
+      <h3>${titleCase(c.name)} Cauldron</h3>
+      <div class="levers">
+        ${p2wLever("Brew speed", c.speed, c.speed.max)}
+        ${p2wLever("New-bubble odds", c.newBubble, c.newBubble.max)}
+        ${p2wLever("Lower brew-pt req", c.boostReq, c.boostReq.max)}
+      </div>
+    </div>`).join("");
+
+  const liqTiles = W2.liquids.map((l) => `
+    <div class="tile">${UI.sprite("Liquid" + (l.idx + 1) + "_x1", 28, "data")}
+      <div class="label">${l.name}</div>
+      <div class="value">${(l.capacityLowerBound ? "≥ " : "") + fmt(l.capacity)}</div>
+      <div class="sub">P2W: cap Lv ${l.capP2wLevel}/80 · regen Lv ${l.regenP2wLevel}/100</div>
+    </div>`).join("");
+
+  $("cauldronPanel").style.display = "";
+  $("cauldronPanel").innerHTML = `
+    <h2>Cauldron &amp; Liquids <span class="hint">Pay-to-win upgrade ladders (gem-bought) for each cauldron and liquid, plus current liquid storage caps.</span></h2>
+    <h2 class="subhead">Cauldron P2W</h2>
+    <div class="cardgrid4">${cards}</div>
+    <h2 class="subhead" style="margin-top:6px">Liquids <span class="tip" title="Liquids are the secondary currency spent (alongside materials) to level bubbles and vials. Running a liquid dry stalls upgrades in that tier band until it regenerates.">ⓘ</span></h2>
+    <div class="cards">${liqTiles}</div>
+    <p class="note" style="margin-top:8px">Full capacity breakdown (Water Droplets — the other 3 liquids share the same chain with their own varying terms): <a href="#mod_liquidCap">see below ↓</a></p>
+  `;
+}
+
+/* Bespoke liquidCap breakdown — NOT the generic recipe-module renderer (see w2.html's
+ * bucketTerms/termRow), because liquidCap's "add" terms are flat capacity UNITS (base 10,
+ * P2W level, vial bonus, arcade, ...) mixed with two real percents (meal/rift) and one small
+ * flat fraction (bleach) — not a homogeneous 100-baseline percent pool, so the generic "% of
+ * pool" framing used for the other 3 W2 recipes (krukBubbles/fishRate/shinyRate, all points-
+ * or product-chain shaped) would render misleading multipliers here. Terms + values are still
+ * taken directly from /api/stats' liquidCap recipe — no client-side formula math, just display. */
+function renderLiquidCapBreakdown() {
+  const st = DATA?.stats?.liquidCap;
+  const host = $("liquidCapBreakdown");
+  if (!st) { host.innerHTML = ""; return; }
+  const r = st.collapsed;
+  const unknownTerms = r.terms.filter((t) => t.status === "unknown");
+  const unknownCount = unknownTerms.length;
+  const disp = st.display || {};
+  const varying = new Set(["brewCap", "vialCap", "p2wCap"]);
+  const rows = r.terms.map((t) => {
+    const d = disp[t.id] || {};
+    const isMul = t.kind === "mul";
+    const key = `stat.liquidCap.${t.id}`;
+    const partsHtml = varying.has(t.id)
+      ? `<tr class="parts" data-parts="lc_${t.id}" style="display:none"><td colspan="5">
+          ${t.parts.map((p) => `<div class="partrow">${p.label}: <b>${fmt(p.value)}</b></div>`).join("")}
+        </td></tr>` : "";
+    return `<tr class="${varying.has(t.id) ? "expander" : ""}" ${varying.has(t.id) ? `data-term="${t.id}"` : ""}>
+      <td style="max-width:320px"><b>${d.label || t.id}</b> ${varying.has(t.id) ? '<span class="expr">▸ per-liquid</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${isMul ? "×" + fmt(t.value) : (t.value >= 0 ? "+" : "") + fmt(t.value)}</td>
+      <td>${chip(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>${partsHtml}`;
+  }).join("");
+
+  host.innerHTML = `
+    <section class="panel" id="mod_liquidCap">
+      <h2>Liquid Capacity breakdown <span class="hint">Every source that raises max liquid storage, shown for Water Droplets — the "per-liquid" rows differ slightly for the other 3 liquids (click to expand).</span></h2>
+      ${r.lowerBound ? `<div class="lowerbound"><b>Lower bound.</b> ${unknownCount} of ${r.terms.length} sources could not be derived from the save (runtime-only state) and sit at their neutral value — the real capacity is higher.</div>` : ""}
+      <div class="cards" style="margin-bottom:10px">
+        <div class="tile"><div class="label">Computed total</div><div class="value">${(r.lowerBound ? "≥ " : "") + fmt(r.value)}</div><div class="sub">Water Droplets</div></div>
+      </div>
+      <div class="scroll"><table>
+        <tr><th>Source</th><th style="text-align:right">Value</th><th>Status</th><th>History</th><th>How it works</th></tr>
+        ${rows}
+      </table></div>
+      ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+        <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+      </details>` : ""}
+    </section>
+  `;
+  host.querySelectorAll("tr.expander").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="lc_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  const lc = DATA?.stats?.liquidCap;
+  if (lc) { keys.push("stat.liquidCap"); for (const t of lc.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.liquidCap.${t.id}`); }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w2) {
+      $("err").innerHTML = `No <code>w2</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W2 = SNAP.entities.w2;
+
+    const statsRes = await fetch("/api/stats");
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdown below.";
+
+    renderTiles();
+    renderCauldronLiquids();
+    renderLiquidCapBreakdown();
+    await loadHistory();
+    renderLiquidCapBreakdown();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

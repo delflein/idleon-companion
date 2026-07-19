@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rift — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic breakdown renderer's own look (subset actually used here). */
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  /* rift.html-specific */
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .stripcard { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+  .stripcard .big { font-size: 20px; font-weight: 800; }
+  .stripcard .lbl { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .rewardladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .rewardladder span { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .rewardladder span.got { border-color: rgba(12,163,12,.5); color: var(--good); }
+  .rewardladder span.next { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Rift_0.png" alt="" width="26" height="26">Rift</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="riftPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w4 static glossary
+let W4 = null;      // SNAP.entities.w4 shortcut
+
+/* ---------- generic helpers (same as w1.html/w2.html/w3.html, EXTENDED for W4) ---------- */
+/* W4's own numbers routinely blow past where "/1e9 -> B" stays readable — a pushed account's
+ * kitchen cook-SPEED chain (base 10 × ~24 multiplicative arms, several of them per-ladle
+ * exponentials) lands in the 1e28-1e32 range, and late-meal level-up costs (documented UPPER
+ * bounds, see bonuses/cooking.mjs mealCostToNext) reach past 1e150. Printing those through the
+ * plain w1-w3.html fmt() would emit a 20+ digit number, which is its own kind of number-soup —
+ * so this page's fmt() falls back to compact scientific notation once a value crosses 1e15. */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const niceItem = (s) => String(s ?? "")
+  .replace(/_/g, " ")
+  .replace(/([a-z])([A-Z])/g, "$1 $2")
+  .replace(/([A-Za-z])(\d)/g, "$1 $2")
+  .trim();
+
+function levelBar(level, maxLevel) {
+  if (!maxLevel || level <= maxLevel) {
+    const pct = maxLevel ? Math.max(0, Math.min(100, (level / maxLevel) * 100)) : 0;
+    return `Lv ${fmt(level)}${maxLevel ? `<span class="of">/${fmt(maxLevel)}</span>` : ""}
+      ${maxLevel ? `<div class="bar-bg" style="margin-top:3px"><div class="bar-fill" style="width:${pct}%"></div></div>` : ""}`;
+  }
+  return `Lv ${fmt(level)} <span class="chip user" title="Above the recorded max level.">extended past ${fmt(maxLevel)}</span>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip — Rift-related tile only (this page's slice of w4.html's renderTiles()).
+ * ============================================================================================ */
+function renderTiles() {
+  const rift = W4.rift;
+
+  const tiles = [
+    ["Rift_0|etc", "Rift", `${rift.level + 1}`, rift.nextTask ? "task in progress" : "—"],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Rift strip (informational — no levers here) + Skill Mastery (collapsed).
+ * ============================================================================================ */
+function skillRowHtml(s) {
+  const thresholds = GLOSS?.skillMasteryThresholds || [];
+  const next = thresholds[s.rank];
+  return `<tr>
+    <td><b>${niceItem(s.name)}</b></td>
+    <td style="text-align:right">Rank ${s.rank}<span class="of">/${thresholds.length}</span></td>
+    <td>${next != null ? levelBar(s.total, next) : `${fmt(s.total)} <span class="chip live">max rank</span>`}</td>
+  </tr>`;
+}
+
+function renderRift() {
+  const r = W4.rift;
+  const rewards = GLOSS?.riftRewards || [];
+  const nextUnlockAt = Math.min(...rewards.filter((o) => o.unlockAt > r.level).map((o) => o.unlockAt), Infinity);
+  const ladder = rewards.map((rw) => {
+    const got = r.level >= rw.unlockAt;
+    const isNext = !got && rw.unlockAt === nextUnlockAt;
+    return `<span class="${got ? "got" : isNext ? "next" : ""}" title="Rift ${rw.unlockAt + 1}">${rw.name}</span>`;
+  }).join("");
+
+  const sm = W4.skillMastery;
+  const skillRows = sm.skills.slice().sort((a, b) => b.rank - a.rank || b.total - a.total).map(skillRowHtml).join("");
+
+  $("riftPanel").style.display = "";
+  $("riftPanel").innerHTML = `
+    <h2>${UI.sprite("Rift_0", 20, "etc")} Rift <span class="hint">Endless-mode Rift tier ladder — cosmetic tiers with a rotating task type, and the reward milestones each tier unlocks. Planning info only, no timers.
+      <span class="tip" title="The Rift counter only goes up (defeat mobs in the current cosmetic tier's task to advance). Each tier's task TYPE and requirement amount are fixed by the tier's slot in a 70-tier cycle; reward milestones unlock every 5 tiers.">ⓘ</span></span></h2>
+    <div class="stripcard">
+      <div><div class="lbl">Current</div><div class="big">Rift ${r.level + 1}</div></div>
+      <div><div class="lbl">Task</div><div class="big" style="font-size:14px;font-weight:650">${r.nextTask ?? "—"}</div></div>
+      <div><div class="lbl">Progress</div><div class="big">${r.taskReq != null ? `${fmt(r.progress)}<span class="of">/${fmt(r.taskReq)}</span>` : fmt(r.progress)}</div></div>
+      ${r.completed != null ? `<div><div class="lbl">Status</div><div class="big" style="font-size:14px">${r.completed ? '<span class="chip live">ready to advance</span>' : '<span class="chip soon">in progress</span>'}</div></div>` : ""}
+    </div>
+    <h2 class="subhead">Reward ladder <span class="of">every 5 tiers</span></h2>
+    <div class="rewardladder">${ladder}</div>
+    <details class="fold" style="margin-top:14px">
+      <summary>Skill Mastery — ${sm.unlocked ? `${sm.skills.length} skills tracked` : `locked until Rift ${sm.unlockRift + 1}`}</summary>
+      ${sm.unlocked ? `<div class="scroll" style="margin-top:8px"><table><tr><th>Skill</th><th style="text-align:right">Rank</th><th>Total level vs next rank</th></tr>${skillRows}</table></div>`
+        : `<p class="note">Skill Mastery converts each skill's ACCOUNT-WIDE total level (summed across every character) into a rank 0-${(GLOSS?.skillMasteryThresholds || []).length}, which feeds several late-game bonus formulas. Unlocks at Rift ${sm.unlockRift + 1}.</p>`}
+    </details>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w4) {
+      $("err").innerHTML = `No <code>w4</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W4 = SNAP.entities.w4;
+
+    const glossRes = await fetch("/api/w4");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderRift();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

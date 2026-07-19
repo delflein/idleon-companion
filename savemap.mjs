@@ -193,6 +193,52 @@ export const sel = {
   /** Spelunk[13][2] = how many Spelunky lore-epic bonuses are unlocked; LoreEpiBon only builds
    *  entries with index < this. */
   loreEpicUnlocked: (s) => ((s.get("Spelunk") ?? [])[13] ?? [])[2] ?? 0,
+
+  /* --- W5 Gaming Garden (Gaming / GamingSprout / Spelunk) ------------------ */
+  /** Gaming[] — flat W5 gaming array (savemap/w45 "Gaming", confirmed). [0]=bits, [1..3]=fertilizer
+   *  levels, [4]=mutant count, [5]=DNA, [7]=mutate-upg count, [8]=best-nugget (bits multi input),
+   *  [9]=acorns, [12]=superbit letter string, [14]=king tokens. */
+  gaming: (s) => s.get("Gaming") ?? [],
+  /** GamingSprout[] — rows 0..24 plots, 25..33 state rows (savemap/w45 "GamingSprout", inferred).
+   *  Import row b lives at GamingSprout[25+b]; [32]=Immortal Snail ([1]=level), [33]=King Rat
+   *  ([1..3]=shop levels). [28][2]=Elegant Seashell rank. */
+  gamingSprout: (s) => s.get("GamingSprout") ?? [],
+  /** Spelunk[] — W5 lore/palette/gaming state (savemap/w67 "spelunking", confirmed). [9]=palette
+   *  levels (see paletteLevels), [18]=legend talents (see legendTalentLevels), [0]=lore flags. */
+  spelunk: (s) => s.get("Spelunk") ?? [],
+  /** GamingSprout[32][1] = Immortal Snail level (import row 25+7). Feeds SnailStuff(2)=bits multi
+   *  and PaletteLuck's "Lucky Snail" superbit term. N.js:17773-17776. confidence: inferred
+   *  (row 32 confirmed as a non-plot state row; the [1]=level mapping is cross-checked against
+   *  IdleonToolbox's snailBonus/snailLevel and the "2^min(25,Lv)*1.5^..." bits curve). */
+  snailLevel: (s) => Number((sel.gamingSprout(s)[32] ?? [])[1] ?? 0),
+  /** GamingSprout[33][b+1] = Rat King shop upgrade level b (0..2). RatShopBonuses(b), N.js:17773. */
+  ratShopLevel: (s, b) => Number((sel.gamingSprout(s)[33] ?? [])[b + 1] ?? 0),
+
+  /* --- W5 The Cavern / Slab (Holes / Cards1 / GreenStacks) ----------------- */
+  /** Holes[] — W5 caverns (savemap/w67 "caverns", confirmed). [1]=villager levels, [3]=opals
+   *  invested per villager (the multiplicative base in VillagerExpPerHour), [23]=per-villager
+   *  additive term (raw, not %). */
+  holes: (s) => s.get("Holes") ?? [],
+  /** Holes[3][b] = opals invested in villager b. Confirmed as the villager EXP/hr multiplicative
+   *  base via LeastOpalsInVillager (N.js:18321 scans this same array). Holes[3] is not in
+   *  savemap/w67's documented idx list — evidence: sample [5,5,5,5,382,0,...] aligns with the 5
+   *  active villagers. confidence: inferred. */
+  villagerOpals: (s) => sel.holes(s)[3] ?? [],
+  /** Holes[23][b] = per-villager additive EXP/hr term (RAW, used as `1 + Holes[23][b]`, NOT /100).
+   *  N.js:18227-18229. Sample [0,0,1,0,...] -> villager 2 doubled. confidence: inferred/anomaly
+   *  (the only other Holes[23] refs treat it as a 0/1 UI flag; transcribed verbatim). */
+  villagerRawTerm: (s) => sel.holes(s)[23] ?? [],
+  /** Cards1 = ACCOUNT-WIDE item-discovery log; its LENGTH is the Slab "items ever found" counter
+   *  (client's Cards[1].length). savemap/character.mjs "Cards1" (confirmed). Slab bonuses floor()
+   *  over this length. */
+  slabItems: (s) => s.get("Cards1") ?? [],
+  slabItemCount: (s) => (sel.slabItems(s) ?? []).length,
+  /** GreenStacks = items green-checkmarked on the Slab (picked up from a chest at least once).
+   *  savemap/account.mjs "greenStacks" (confirmed). Its length feeds a Lab Mainframe bonus. */
+  greenStacks: (s) => s.get("GreenStacks") ?? [],
+  /** Jars = jar-container collection (savemap/w123 "jars"). Length = jars owned; geometry-only
+   *  fields are documented, contents unmapped. Exposed for the entity count. */
+  jars: (s) => s.get("Jars") ?? [],
   /** Grimoire[i] = grimoire upgrade level i. 17 = "Grey_Tome_Book", coeff 1 -> the level IS
    *  the % ("}x_higher_bonuses_from_the_Tome"). */
   grimoireLv: (s, i) => Number((s.get("Grimoire") ?? [])[i] ?? 0),
@@ -258,11 +304,61 @@ export const sel = {
   /** Which characters have a given star sign equipped — lets the UI ask instead of guessing. */
   charsWithStarSign: (s, id) => s.charIdxs.filter((i) => sel.hasStarSign(s, i, id)),
 
+  /** StampLv[tab] = dict slot -> level (3 tabs; dict carries a literal "length" key — use vals()
+   *  for iteration, direct [slot] for lookups). Account-wide. */
+  stampTab: (s, tab) => (s.get("StampLv") ?? [])[tab] ?? {},
+
+  /* --- cards & chips ------------------------------------------------------ */
+  /** Cards0 = ACCOUNT-WIDE map cardId -> lifetime collect count (drives star tier). */
+  cardsCollected: (s) => s.get("Cards0") ?? {},
+  /** CardEquip_N = the character's 12 equipped card ids; "B" = empty slot. */
+  cardEquip: (s, charIdx) => s.at("CardEquip_N", charIdx) ?? [],
+  /** CSetEq_N = the character's equipped card SET, saved as map bonusText -> value
+   *  (this IS the client's Cards[3]; CardSetBonuses reads it via IDforCardSETbonus). */
+  cardSetEquipped: (s, charIdx) => s.at("CSetEq_N", charIdx) ?? {},
+  /** Lab[1+charIdx] = that character's 7 lab chip slots (ChipDesc id, -1 = empty).
+   *  Client: RecalcChipBonuses reads Lab[1 + GetPlayersUsernames.indexOf(name)][0..6]. */
+  labChips: (s, charIdx) => ((s.get("Lab") ?? [])[1 + charIdx] ?? []),
+  /** OptLacc[155] / OptLacc[603] = CSV card-id lists force-lifted to 6 / 7 stars
+   *  (the CardLv overrides at the end of RunCodeOfTypeXforThingY("CardLv")). */
+  sixStarCards: (s) => String((s.get("OptLacc") ?? [])[155] ?? "").split(","),
+  sevenStarCards: (s) => String((s.get("OptLacc") ?? [])[603] ?? "").split(","),
+
+  /** __serverVars = the Firestore `_vars/_vars` remote-config doc, merged into raw at sync time
+   *  (companion.mjs). NOT part of the game save; null on snapshots synced before 2026-07-17.
+   *  Known keys: voteCategories ([selected, ...candidates] — the weekly ballot),
+   *  votePercent, voteCat2/votePercent2 (Meritocracy), AncientOddPerIsland, AncientArtiPCT. */
+  serverVars: (s) => s.get("__serverVars"),
+  /** The currently ACTIVE weekly vote bonus id, or null when unknowable (old snapshot). */
+  activeVoteId: (s) => {
+    const v = sel.serverVars(s)?.voteCategories;
+    return Array.isArray(v) && v.length ? Number(v[0]) : null;
+  },
+
   /* --- misc already consumed by domain.mjs ------------------------------- */
   achieveReg: (s) => s.get("AchieveReg") ?? [],
   emperorShowdown: (s) => (s.get("OptLacc") ?? [])[369] ?? 0,
   emperorAttempts: (s) => Math.max(0, -(((s.get("OptLacc") ?? [])[370] ?? 0) - 1)),
   atoms: (s) => s.get("Atoms") ?? [],
+  /* --- W3 (Frostbite Tundra) ---------------------------------------------- */
+  /** Refinery (renamed from save key "Print"? no — "Refinery"): [0]=cycle timers, [1]=salt-in-slot
+   *  item ids, [2]=stored qty, [3+g]=[rank,level,...] per salt. savemap/w123.mjs "Refinery". */
+  refinery: (s) => s.get("Refinery") ?? [],
+  /** SaltLick[m] = level of Salt Lick bonus m (25 slots, capped at SaltLicks[m][4]). w123 "SaltLick". */
+  saltLickLevels: (s) => s.get("SaltLick") ?? [],
+  /** Printer (save key "Print" -> "Printer"): 5-num header then [id,qty] stride-2, 14/char. w123 "Print". */
+  printer: (s) => s.get("Print") ?? [],
+  /** PrinterXtra: extra printer sample slots, [id,qty] stride-2, 10/char. w123 "PrinterXtra". */
+  printerXtra: (s) => s.get("PrinterXtra") ?? [],
+  /** TowerInfo save (key "Tower"): flat levels — [0..8]=Construction towers, [9..17]=Worship
+   *  pillars, [18..26]=Worship shrines. gamedata-w3-towers.mjs + w123 "Tower". */
+  towerLevels: (s) => s.get("Tower") ?? [],
+  /** TotemInfo: 3 rows of 9 — [0]=best waves per totem, [1]=parallel track, [2]=charge/xp. w123 "TotemInfo". */
+  totems: (s) => s.get("TotemInfo") ?? [],
+  /** Rift[0] = current Rift level (gates Construction Mastery @40, etc.). */
+  riftLevel: (s) => Number((s.get("Rift") ?? [])[0] ?? 0),
+  /** Worship skill level for a character = Lv0[9] (SKILL.worship = 8 -> index 9). */
+  worshipLevelOf: (s, ci) => Number((s.at("Lv0_N", ci) ?? [])[SKILL.worship + 1] ?? 0),
   mealLevels: (s) => (s.get("Meals") ?? [])[0] ?? [],
   dream: (s) => s.get("Dream") ?? [],
   weeklyBoss: (s) => s.get("WeeklyBoss") ?? {},
@@ -275,9 +371,215 @@ export const sel = {
   sushi: (s) => s.get("Sushi") ?? [],
   rift: (s) => s.get("Rift") ?? [],
   lab: (s) => s.get("Lab") ?? [],
+  /** Divinity CSV: [0..11] per-char linked god, [12..23] per-char blessing/second god (-1 none),
+   *  [24] points, [25] divinity level. Values map through GodsInfo[g][13] for Bonus_MAJOR. */
+  divinity: (s) => {
+    const d = s.get("Divinity");
+    return Array.isArray(d) ? d : String(d ?? "").split(",").map(Number);
+  },
+  /** Divinity[28+g] = MAJOR blessing level for god g (0..9). savemap/w45 "Divinity" idx 28..37
+   *  (inferred; sample [312,240,240,306,200,213,263,166,167,135] matches the 10 gods). Cost curve
+   *  GodsInfo[g][4]*GodsInfo[g][5]^level, N.js:17099/17137. */
+  blessingLevel: (s, g) => Number(sel.divinity(s)[28 + g] ?? 0),
+  /** Divinity[24] = DIVINITY POINTS (offering currency). savemap/w45 idx 24 (confirmed). */
+  divinityPoints: (s) => Number(sel.divinity(s)[24] ?? 0),
+  /** Divinity[25] = god rank / divinity level counter (gates god unlocks; max(0,x-10) feeds the
+   *  emporium jade blessing scaler). savemap/w45 idx 25 (confirmed as level). */
+  godRank: (s) => Number(sel.divinity(s)[25] ?? 0),
+  /** Divinity[39] = PARTICLES (Atom Collider currency; also pays gods 5/7/9's blessings).
+   *  savemap/w45 idx 39 (confirmed-as-currency). */
+  divinityParticles: (s) => Number(sel.divinity(s)[39] ?? 0),
+  /** OptionsListAccount[427+b] = Coral Reef "CoralKidUpgBonus" upgrade level b (0..5). This save
+   *  stores the account-options array under the key "OptLacc". gamedata-w7-coralreef.mjs:
+   *  CoralKidUpgBonus reads OLA[427+b]. Sample OLA[427..432]=[139,53,94,71,82,45]. confidence:
+   *  inferred (index cross-checked against the toolbox Coral Reef parser). */
+  coralKidLevel: (s, b) => Number((s.get("OptLacc") ?? [])[427 + b] ?? 0),
   breeding: (s) => s.get("Breeding") ?? [],
+  /** Cooking[k] = kitchen k row. [k][0]=unlock/status flag (0=locked); [k][6]=speed ladle lv,
+   *  [k][7]=fire ladle lv, [k][8]=luck ladle lv; [k][1..5]=meal slots. 10 kitchens.
+   *  savemap/w45 "Cooking" (confirmed: TalentCalc(-7) sums Cooking[k][6..8] gated on [k][0]). */
+  cooking: (s) => s.get("Cooking") ?? [],
+  /** CookMaster: [0]=per-meal cooking-mastery ("yellow") points -> BonusMultiCook (N.js:18136);
+   *  [1][0]=mastery RANK, [1][1]=rank XP; [2]=6 purple-category levels. savemap/w45 "CookMaster". */
+  cookMaster: (s) => s.get("CookMaster") ?? [],
+  /** Ribbon[28+mealIdx] = per-meal ribbon rank -> Summoning("RibbonBonus") (N.js:6214, padded so
+   *  slots 28..28+73 map to meals 0..73 at N.js:9438). Saved via addSaveEntryList("Ribbon"). */
+  ribbons: (s) => s.get("Ribbon") ?? [],
+  /** Pets[i] = [species, ?, power, ?] — Fenceyard (unassigned) pool. savemap/w45 "Pets". */
+  pets: (s) => s.get("Pets") ?? [],
+  /** PetsStored[i] = [species|"none", territoryIdxStr, power, ?] — assigned/stored pets. savemap/w45 "PetsStored". */
+  petsStored: (s) => s.get("PetsStored") ?? [],
+  /** Territory[zone] = [progress, roundCount, ...reward tuples]. savemap/w123 "Territory". */
+  territory: (s) => s.get("Territory") ?? [],
   farmUpg: (s) => s.get("FarmUpg") ?? [],
   farmCrop: (s) => s.get("FarmCrop") ?? {},
+  /** FarmPlot[i] = 7-tuple [seedTier, growthProgress, evoProgress, evoLock, cropsOnVine,
+   *  ogLevel, ogAccumulator] — full decode in savemap/w67.mjs (confirmed vs the N.js tick). */
+  farmPlots: (s) => s.get("FarmPlot") ?? [],
+  /** FarmRank = [perPlotRank[36], perPlotRankExp[36], rankDbUpgradeLevels[20]]. */
+  farmRanks: (s) => s.get("FarmRank") ?? [],
+  /** OptLacc[416] = exotic-market purchases used this week (reset on week change ~N.js:19535). */
+  exoticBuysUsed: (s) => Number((s.get("OptLacc") ?? [])[416] ?? 0),
+  /** OptLacc[481] = last seen exotic week index floor(GlobalTime/604800) — from the SAVE, may
+   *  lag the real current week; compute the live week from wall clock, never from this. */
+  exoticWeekIdx: (s) => Number((s.get("OptLacc") ?? [])[481] ?? 0),
+  /** OptLacc[607] = consecutive days without a megacrop sticker (Doggie: odds x2^min(12,days)
+   *  then +1500/day past 11; reset to 0 on find — N.js StickerOddsMulti ~17923). */
+  stickerDryDays: (s) => Number((s.get("OptLacc") ?? [])[607] ?? 0),
+  /** Research[10][plot] = 1 when this plot already produced its megacrop sticker this cycle. */
+  plotStickerGiven: (s) => (s.get("Research") ?? [])[10] ?? [],
+
+  /* --- account-wide bonus infrastructure (guild/shrine/prayer/sigil/family/obols/divinity) --- */
+  /** Guild[0][d] = level of guild bonus d (18 numbers). _customBlock_GuildBonuses(d) reads
+   *  GuildTasks[0][d] as the curve level. Save key "Guild" (w123.mjs). */
+  guildBonusLevels: (s) => (s.get("Guild") ?? [])[0] ?? [],
+  /** Total guild bonus points spent (sum of the 18 levels) — a rough "guild activity" proxy. */
+  guildBonusPointsSpent: (s) => ((s.get("Guild") ?? [])[0] ?? []).reduce((a, x) => a + Number(x || 0), 0),
+  /** Shrine[b] = a shrine's save row; [b][3] is its LEVEL (w123.mjs: `.5 < ShrineInfo[b][3]`
+   *  gates _customBlock_Shrine; [b][0] is the map it is placed on). */
+  shrineLevels: (s) => s.get("Shrine") ?? [],
+  /** Prayers_N (per character): 12 equipped prayer slots, -1 = empty, else prayer id. */
+  prayersActiveOf: (s, charIdx) => s.at("Prayers_N", charIdx) ?? [],
+  /** PrayOwned (account-wide): prayer LEVEL per prayer id (0 = not unlocked). */
+  prayersUnlocked: (s) => s.get("PrayOwned") ?? [],
+  /** CauldronP2W[4] = sigil stride-2 pairs; [1 + 2*d] is sigil d's TIER (w123.mjs). */
+  sigilTiers: (s) => (s.get("CauldronP2W") ?? [])[4] ?? [],
+  /** ObolEqMAPz1 = the family/account obol page: sparse map slotIndex -> stat object. */
+  obolMapFamily: (s) => s.get("ObolEqMAPz1") ?? {},
+  /** ObolEqMAP_N = this character's obol page: sparse map slotIndex -> stat object. */
+  obolMapChar: (s, charIdx) => s.at("ObolEqMAP_N", charIdx) ?? {},
+  /** CharacterClass_N (per character): class id indexing CustomLists.ClassNames. */
+  characterClass: (s, charIdx) => Number(s.at("CharacterClass_N", charIdx) ?? 0),
+  /** Lv0_N[0] = character LEVEL; Lv0_N[14] = Divinity skill level (skill 13 -> offset +1). */
+  charLevel: (s, charIdx) => Number((s.at("Lv0_N", charIdx) ?? [])[0] ?? 0),
+  charDivinityLevel: (s, charIdx) => Number((s.at("Lv0_N", charIdx) ?? [])[14] ?? 0),
+  /** GemItemsPurchased[9] gates one Divinity minor bonus (Bonus_Minor e==0). */
+  gemItemsPurchased: (s) => s.get("GemItemsPurchased") ?? [],
+
+  /* --- W1: statues / anvil / forge / owl / bribes ------------------------- */
+  /** OptionsListAccount — the save renames it "OptLacc"; some snapshots keep the full name. */
+  optionsAccount: (s) => s.get("OptionsListAccount") ?? s.get("OptLacc") ?? [],
+  /** StatueLevels_N[idx] = [level, exp] for character ci (per-char; statues effective at the
+   *  account best). */
+  statueLevelsOf: (s, ci) => s.at("StatueLevels_N", ci) ?? [],
+  /** StuG[idx] = statue tier (0 base, >=1 gold, >=2 onyx, >=3 zenith). Account-wide. */
+  statueTiers: (s) => s.get("StuG") ?? [],
+  /** AnvilPAstats_N = per-char [availPoints, coinsPts, matsPts, xpPts, speedPts, capPts]. */
+  anvilStatsOf: (s, ci) => s.at("AnvilPAstats_N", ci) ?? [],
+  /** AnvilPA_N[slot] = per-char [amount, xp, progress, produced] for the 14 producible items. */
+  anvilProductionOf: (s, ci) => s.at("AnvilPA_N", ci) ?? [],
+  /** AnvilPAselect_N = per-char 3 selected production slots (index into AnvilPA, -1 = empty). */
+  anvilSelectedOf: (s, ci) => s.at("AnvilPAselect_N", ci) ?? [],
+  /** ForgeLV = 6 forge/furnace upgrade levels. Account-wide. */
+  forgeLevels: (s) => s.get("ForgeLV") ?? [],
+  /** ForgeItemOrder = 48-entry (16 slots x 3 stride) forge slot contents ("Blank" = empty). */
+  forgeItemOrder: (s) => s.get("ForgeItemOrder") ?? [],
+  /** Owl lives in OptionsListAccount: [253] feathers held, [254+i] upgrade i level,
+   *  [262] mega-feather tier count, [263] spend progress, [264] shiny-feather count. */
+  owlUpgradeLevel: (s, i) => Number((sel.optionsAccount(s))[254 + i] ?? 0),
+  owlFeathers: (s) => Number((sel.optionsAccount(s))[253] ?? 0),
+  owlMegaTier: (s) => Number((sel.optionsAccount(s))[262] ?? 0),
+  owlProgress: (s) => Number((sel.optionsAccount(s))[263] ?? 0),
+  owlShinyCount: (s) => Number((sel.optionsAccount(s))[264] ?? 0),
+
+  /* --- W2: alchemy cauldron/liquid P2W, brew track, fishing, ballot ------- */
+  /** CauldronP2W = 6-element array: [0] cauldron ladder (3 axes/cauldron), [1] liquid ladder
+   *  (2 axes/liquid), [2] vial ladder [attempts,rng], [3] player ladder [speed,extraExp],
+   *  [4] sigil pairs, [5] [dailyAttemptsRemaining]. Evidence: gamedata-w2-cauldron.mjs header,
+   *  N.js:7372-7379 dispatcher + toolbox getPay2Win destructure. confidence: confirmed. */
+  cauldronP2W: (s) => s.get("CauldronP2W") ?? [],
+  /** CauldronP2W[5][0] = brew attempts currently remaining (N.js:8774-8776, "DAILY_ATTEMPTS"). */
+  vialAttemptsRemaining: (s) => Number(((s.get("CauldronP2W") ?? [])[5] ?? [])[0] ?? 0),
+  /** CauldronInfo = per-cauldron/vial/liquid state. [0..3] bubble levels, [4] vial levels,
+   *  [8] free "brew progression" track: [8][row][statIdx][1] = level (row 0-3 cauldrons, 4-7
+   *  liquids). Evidence: gamedata-w2-liquids.mjs header, N.js:7333/7354-7368. confidence: confirmed. */
+  cauldronInfo: (s) => s.get("CauldronInfo") ?? [],
+  /** Free brew-track level for a row (0-3 cauldrons, 4-7 liquids) and stat index. */
+  brewLevel: (s, row, statIdx) => Number((((((s.get("CauldronInfo") ?? [])[8] ?? [])[row] ?? [])[statIdx] ?? [])[1]) ?? 0),
+  /** OptLacc[453] = currently SELECTED Meritocracy category index; OptLacc[472] = MeritocCanVote
+   *  flag (1 once voting unlocked). Evidence: gamedata-w2-ballot.mjs, N.js Summoning2 dispatcher. */
+  meritocSelected: (s) => Number((s.get("OptLacc") ?? [])[453] ?? -1),
+  meritocCanVote: (s) => Number((s.get("OptLacc") ?? [])[472] ?? 0),
+  /** OptLacc[123] = per-liquid "bleach liquid" gem-shop unlock counter; GemItemsPurchased[106] =
+   *  bleach-liquid purchases. Both feed the LiquidCap bleach term (N.js:7360-7365). */
+  bleachLiquidGem: (s) => Number((s.get("GemItemsPurchased") ?? [])[106] ?? 0),
+  bleachLiquidOpt: (s) => Number((s.get("OptLacc") ?? [])[123] ?? 0),
+  /** Poppy / Fishing Town account options — verbatim index map in gamedata-w2-fishing.mjs
+   *  (N.js:18071-18162 Roo* dispatcher). [267] fish currency, [268..278] Poppy upgrade levels,
+   *  [279] mega-fish tier count, [281..286] shiny-multi tier levels, [290] reset points,
+   *  [291..295] reset-spiral levels, [296] tar currency, [297..304] tar-pit upgrade levels.
+   *  All read from OptLacc directly. confidence: confirmed (per-index citations in gamedata). */
+  poppyOpt: (s, i) => Number((s.get("OptLacc") ?? [])[i] ?? 0),
+
+  /* --- W6/W7 endgame (Summoning / Sneaking / Emperor / Beanstalk / Zenith / Clam) --------- */
+  /** Spelunk[45][b] = OWNED LEVEL of Zenith Market row b (0..9). Feeds
+   *  Thingies("ZenithMarketBonus",b,0) = floor(ZENITH_MARKET[b].coeff * level).
+   *  gamedata-w7-zenith.mjs. confidence: confirmed (N.js ZenithMarketBonus @byte 10701968 reads
+   *  Spelunk[45][b]); savemap/w67.mjs Spelunk.idx does not itemize idx 45 (documented gap). */
+  zenithMarketLevel: (s, b) => Number(((s.get("Spelunk") ?? [])[45] ?? [])[b] ?? 0),
+  /** OptLacc[464] = Clam Work JOB LEVEL (0..9). ClamWorkBonus(b) = OptLacc[464] > b ? 1 : 0
+   *  (a THRESHOLD GATE, not a percent). gamedata-w7-clamwork.mjs, N.js @byte 10709318. */
+  clamJobLevel: (s) => Number((s.get("OptLacc") ?? [])[464] ?? 0),
+  /** OptLacc[455+b] = Clam Work UPGRADE level b (0..8). ClamBonuses(b) = CLAM_UPG[b].coeff *
+   *  OptLacc[455+b]. gamedata-w7-clamwork.mjs, N.js @byte ~10706800. */
+  clamUpgLevels: (s) => Array.from({ length: 9 }, (_, b) => Number((s.get("OptLacc") ?? [])[455 + b] ?? 0)),
+  /** Spelunk[11][b] = ADVICE FISH ("BigFish") upgrade level b (0..5). BigFishBon(b) =
+   *  level/(100+level) * BIG_FISH[b].coeff. gamedata-w7-spelunking.mjs, N.js @byte 10861944. */
+  adviceFishLevels: (s) => ((s.get("Spelunk") ?? [])[11] ?? []),
+  /** Spelunk[13][b] = CORAL REEF BUILDING level b (0..5). ReefCost(b) reads it.
+   *  gamedata-w7-coralreef.mjs, N.js @byte 10713182. */
+  reefBuildingLevels: (s) => ((s.get("Spelunk") ?? [])[13] ?? []),
+
+  /** Summon[0][b] = Summoning Upgrade (Ya.SummonUPG, 82 rows) LEVEL b. gamedata-w6-summoning.mjs
+   *  SummUpgBonus reads Summon[0][b]. confidence: confirmed. */
+  summonUpgLevels: (s) => (sel.summon(s)[0]) ?? [],
+  /** Summon[0][b] convenience: level of a single summon upgrade. */
+  summonUpgLevel: (s, b) => Number((sel.summon(s)[0] ?? [])[b] ?? 0),
+  /** OptLacc[319] = highest Endless Summoning win count (drives endless-scaled army terms &
+   *  the endless difficulty walk). confidence: confirmed (N.js GenINFO[174]=OptLacc[319]). */
+  endlessSummonWins: (s) => Number((s.get("OptLacc") ?? [])[319] ?? 0),
+  /** floor(sum(Summon[0])/100) = GenINFO[170], the "per-100 total summon upgrade levels" counter
+   *  read by several army HP/DMG and cost terms. confidence: confirmed (N.js this._DN5=sum(Summon[0])). */
+  summonTotalUpgLevels: (s) => (sel.summon(s)[0] ?? []).reduce((a, x) => a + (Number(x) || 0), 0),
+  /** KRbest["SummzTrz"+colour] = kills on summoning stone `colour` (0..6). SumStoneTrialz(colour,0).
+   *  gamedata-w6-summoning.mjs; save key KRbest documented in savemap/w45.mjs. */
+  summonStoneKills: (s, colour) => Number((s.get("KRbest") ?? {})["SummzTrz" + colour] ?? 0),
+
+  /** Ninja[103][b] = Ninja Knowledge UPGRADE level b (0..28). NLbonuses(b) = level*modifier.
+   *  gamedata-w6-sneaking.mjs. confidence: confirmed (N.js "NLbonuses" reads Ninja[103][b]). */
+  ninjaUpgLevels: (s) => sel.ninja(s)[103] ?? [],
+  ninjaUpgLevel: (s, b) => Number((sel.ninja(s)[103] ?? [])[b] ?? 0),
+  /** Ninja[104][e] = Beanstalk rank for beanstalk-slot e (0 = not planted, 1 = 10k, 2 = 100k...).
+   *  gamedata-w6-beanstalk.mjs; N.js _customBlock_GoldFoodBonuses reads Ninja[104][e]. */
+  beanstalkRanks: (s) => sel.ninja(s)[104] ?? [],
+  /** Ninja[107][b] = pristine charm b unlock flag (0/1), 23 charms. */
+  pristineCharmFlags: (s) => sel.ninja(s)[107] ?? [],
+  /** Ninja[102][9] = jade-emporium unlock bitstring (letters). jadeEmporiumOwned reads it. */
+  jadeUnlockString: (s) => (sel.ninja(s)[102] ?? [])[9],
+  /** Ninja[b][0] = character/twin b's CURRENT FLOOR (0..11). Used to resolve per-floor detection.
+   *  (Twins are stored as Ninja[0..] rows.) confidence: confirmed (N.js GenerateItem NinjaInfo[12+Ninja[b][0]]). */
+  ninjaTwinFloor: (s, b) => Number((sel.ninja(s)[b] ?? [])[0] ?? 0),
+  /** OptLacc[233+b] = gemstone b's base value (GemstoneBonus gate: > 0.5). gamedata-w6-sneaking.mjs. */
+  gemstoneBase: (s, b) => Number((s.get("OptLacc") ?? [])[233 + b] ?? 0),
+  /** OptLacc[402] = pristine-charm gacha roll counter (drives the daily-decaying roll chance). */
+  charmRollCounter: (s) => Number((s.get("OptLacc") ?? [])[402] ?? 0),
+  /** OptLacc[231] = selected Ninja Mastery cycle; OptLacc[232] = Ninja Mastery reached. */
+  ninjaMasterySelected: (s) => Number((s.get("OptLacc") ?? [])[231] ?? 0),
+  ninjaMastery: (s) => Number((s.get("OptLacc") ?? [])[232] ?? 0),
+
+  /** OptLacc[382] = feeds DailyEmperorTries (round(1+[382])) and MaxEmperorAttemptStack
+   *  (round(5 + 5*emporium39 + 6*[382])). gamedata-w6-emperor.mjs. confidence: read-only formula
+   *  input (its own setter was not located; treat the value as save-derived). */
+  emperorTries382: (s) => Number((s.get("OptLacc") ?? [])[382] ?? 0),
+  /** OptLacc[370] = Emperor signed attempt-debt counter; attemptsLeft = max(0, round(1-[370])). */
+  emperorDebt370: (s) => Number((s.get("OptLacc") ?? [])[370] ?? 0),
+
+  /** EquipOrder_N[2] = this character's equipped FOOD item ids ("Blank" = empty). Tab 2 = food. */
+  equippedFoodOrder: (s, ci) => ((s.at("EquipOrder_N", ci) ?? [])[2]) ?? [],
+  /** EquipQTY_N[2] = stack count per equipped food slot, parallel to equippedFoodOrder. */
+  equippedFoodQty: (s, ci) => ((s.at("EquipQTY_N", ci) ?? [])[2]) ?? [],
+  /** FoodSlO_N = number of unlocked food slots for this character. */
+  foodSlotsOwned: (s, ci) => Number(s.at("FoodSlO_N", ci) ?? 0),
 };
 
 /** Registry coverage, for the report / a future UI panel. */

@@ -13,7 +13,12 @@ history.js
 # OS / editor
 .DS_Store
 node_modules/
+companion.log
 
 # Game client (LavaFlame2 copyright) — ground-truth formulas, grep-only. NEVER commit.
 N.js
 idleon_index.html
+
+# IdleonToolbox reference clone (MIT, github.com/Morta1/IdleonToolbox) — used as an INDEX of
+# which terms feed a stat and for lifting data tables; formulas verified in N.js before trust.
+idleon-toolbox/

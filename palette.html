@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Palette — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  select.inlinesel { font-size: 12px; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .tile.pending { opacity: .5; }
+  section.panel.pending { opacity: .6; }
+  section.panel.pending h2 { color: var(--ink-muted); }
+  .pill-pending { font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: var(--warning); border: 1px solid rgba(250,178,25,.5); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/GamingPal.png" alt="" width="26" height="26">Palette</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="palettePanel" style="display:none"></section>
+<div id="rmod_paletteLuck"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let DATA = null;    // /api/stats payload
+let GLOSS = null;   // /api/w5 static glossary
+let SERIES = {};    // metric key -> [{ts,v}]
+let W5 = null;      // SNAP.entities.w5 shortcut
+
+/* ---------- module state ---------- */
+let PALETTE_SHOWALL = false;
+let CHARSEL = {};       // recipe name -> "account" | charIdx (string)
+let SHOWALL = {};       // recipe name -> bool, "show more" toggle (recipe modules)
+
+/* ---------- generic helpers (same as w1-w5.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+/* Entity text already has "_" -> " " (domain.mjs); this strips the N.js value-placeholder
+ * punctuation ("{", "}", "#", etc.) that domain.mjs leaves untouched. */
+const stripPh = (s) => String(s ?? "").replace(/[{}<>$@#]/g, "").replace(/\s+/g, " ").trim();
+
+function charName(i) { return SNAP?.charNames?.[i] ?? ("char " + i); }
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const p = W5.palette;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("GamingPal", 28, "data")}<div class="label">Palette luck</div><div class="value">${(p.luckLowerBound ? "≥ " : "") + "×" + fmt(p.luck)}</div><div class="sub">${p.slots.filter(x => x.unlocked).length}/${p.slots.length} colours unlocked</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * MODULE 1b — Palette: 37 colour slots (level, fed stat, unlocked). Luck tile + paletteLuck
+ * recipe embed lives in the generic RECIPE_MODULES renderer below (#mod_paletteLuck).
+ * ============================================================================================ */
+function paletteRowHtml(p) {
+  return `<tr class="${p.unlocked ? "" : "dim"}">
+    <td><b>${p.name}</b>${p.unlocked ? "" : ' <span class="chip dead">not unlocked</span>'}</td>
+    <td style="text-align:right">${fmt(p.level)}</td>
+    <td class="note">${stripPh(p.stat)}</td>
+  </tr>`;
+}
+
+function renderPalette() {
+  const p = W5.palette;
+  const unlockedCount = p.slots.filter((x) => x.unlocked).length;
+  const sorted = p.slots.slice().sort((a, b) => (b.unlocked - a.unlocked) || (b.level - a.level));
+  const shown = PALETTE_SHOWALL ? sorted : sorted.slice(0, 10);
+
+  $("palettePanel").style.display = "";
+  $("palettePanel").innerHTML = `
+    <h2>${UI.sprite("GamingPal", 20, "data")} Palette <span class="hint">37 colours, each leveled independently from Spelunk lore discoveries — every colour feeds a different game-wide bonus (or "nothing yet").
+      <span class="tip" title="A few notable colours: #5 Bright Cyan boosts Sailing Artifact Find chance. #28 Violet boosts the W2 Alchemy 'Prisma' bubble's bonus. #3 Neon Tree and several others directly feed the Palette Luck stat itself (below) — leveling those is self-reinforcing.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("GamingPal", 28, "data")}<div class="label">Palette Luck</div><div class="value">${(p.luckLowerBound ? "≥ " : "") + "×" + fmt(p.luck)}</div><div class="sub"><a href="#mod_paletteLuck">full breakdown ↓</a></div></div>
+      <div class="tile"><div class="label">Colours unlocked</div><div class="value">${unlockedCount}<span class="of">/${p.slots.length}</span></div><div class="sub">at least level 1</div></div>
+    </div>
+    <div class="scroll"><table><tr><th>Colour</th><th style="text-align:right">Level</th><th>Feeds</th></tr>${shown.map(paletteRowHtml).join("")}</table></div>
+    ${sorted.length > 10 ? `<button class="showmore" id="paletteShowMore">${PALETTE_SHOWALL ? "show fewer" : `show ${sorted.length - 10} more`}</button>` : ""}
+  `;
+  const more = $("paletteShowMore");
+  if (more) more.onclick = () => { PALETTE_SHOWALL = !PALETTE_SHOWALL; renderPalette(); };
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for paletteLuck — same pattern as w1-w5.html's
+ * RECIPE_MODULES.
+ * ============================================================================================ */
+const RECIPE_MODULES = [
+  { name: "paletteLuck", title: "Palette Luck", icon: ["GamingPal", "data"],
+    blurb: "The chance multiplier behind every colour's level-up and unlock rolls." },
+];
+
+function currentResult(cfg, st) {
+  const sel = CHARSEL[cfg.name] || "account";
+  if (sel !== "account" && st.byChar) {
+    const c = st.byChar.find((x) => String(x.charIdx) === sel);
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, eqMult, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const eq = eqMult(t);
+  const shownVal = isPoints ? rawVal
+    : t.kind === "mul" ? "×" + fmt(eq)
+    : `×${eq >= 1.1 ? eq.toFixed(2) : eq.toFixed(3)}<div class="expr">${rawVal} of pool</div>`;
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="expander" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:320px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${shownVal}</td>
+      <td>${chip(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function lockedRow(t, disp) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  return `<tr class="dim">
+    <td style="max-width:320px"><b>${label}</b>${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+    <td style="text-align:right">—</td>
+    <td><span class="chip dead">locked/inactive</span></td>
+    <td></td>
+    <td class="note">${d.how || t.note || "Not contributing right now — the source system is locked or inactive on this account."}</td>
+  </tr>`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet — the module fills in on its own once it is.</p>
+  </section>`;
+}
+
+function liveModuleHTML(cfg, st, extraHeader = "") {
+  if (!(cfg.name in CHARSEL)) CHARSEL[cfg.name] = "account";
+  const r = currentResult(cfg, st);
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked, eqMult } = bucketTerms(r);
+  const unknownTerms = r.terms.filter((t) => t.status === "unknown");
+  const unknownCount = unknownTerms.length;
+  const perCharCount = r.terms.filter((t) => t.status === "per-char").length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const caveat = (r.lowerBound || perCharCount) ? `<div class="lowerbound">
+    <b>Lower bound.</b> ${unknownCount ? `${unknownCount} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher.` : "Minor inputs remain unknowable — the real value can only be higher."}
+    ${perCharCount ? ` ${perCharCount} source${perCharCount > 1 ? "s are" : " is"} per-character — pick a character to resolve ${perCharCount > 1 ? "them" : "it"}.` : ""}
+  </div>` : "";
+
+  const charSelHtml = st.byChar ? `<select class="inlinesel charSel" data-mod="${cfg.name}">
+      <option value="account" ${CHARSEL[cfg.name] === "account" ? "selected" : ""}>Account view</option>
+      ${st.byChar.map((c) => `<option value="${c.charIdx}" ${String(c.charIdx) === CHARSEL[cfg.name] ? "selected" : ""}>${charName(c.charIdx)}</option>`).join("")}
+    </select>` : "";
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "x");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span> <span style="flex:1"></span> ${extraHeader}${charSelHtml}</h2>
+    ${caveat}
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div>
+        <div class="sub">${CHARSEL[cfg.name] === "account" ? "account view" : "as " + charName(Number(CHARSEL[cfg.name]))}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount - perCharCount}<span class="of">/${r.terms.length}</span></div>
+        <div class="sub">${perCharCount ? `+${perCharCount} per-character` : "sources computed"}</div></div>
+      ${locked.length ? `<div class="tile"><div class="label">Locked / inactive</div><div class="value">${locked.length}</div><div class="sub">not contributing right now</div></div>` : ""}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, eqMult, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${locked.length ? `<details class="fold" style="margin-top:6px"><summary>${locked.length} locked/inactive source${locked.length > 1 ? "s" : ""}</summary>
+      <div class="scroll"><table>${locked.map((t) => lockedRow(t, disp)).join("")}</table></div>
+    </details>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".charSel").forEach((sel) => sel.addEventListener("change", (e) => {
+    CHARSEL[e.target.dataset.mod] = e.target.value;
+    renderRecipeModules();
+  }));
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander[data-mod]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w5) {
+      $("err").innerHTML = `No <code>w5</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W5 = SNAP.entities.w5;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w5")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdowns below.";
+
+    renderTiles();
+    renderPalette();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

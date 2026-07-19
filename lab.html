@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lab — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* lab.html-specific — subset of w4.html's shared style block actually used by this page. */
+  .tile.pending { opacity: .5; }
+  .gapbox { border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; color: var(--ink-2); font-size: 12.5px; }
+  .gapbox li { margin: 4px 0 4px 16px; }
+  .gapbox h3 { font-size: 13px; color: var(--ink-1); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/afk_targets/Laboratory.png" alt="" width="26" height="26">Lab</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="labPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+
+/* ---------- generic helpers (same as w1.html/w2.html/w3.html, EXTENDED for W4) ---------- */
+/* W4's own numbers routinely blow past where "/1e9 -> B" stays readable — a pushed account's
+ * kitchen cook-SPEED chain (base 10 × ~24 multiplicative arms, several of them per-ladle
+ * exponentials) lands in the 1e28-1e32 range, and late-meal level-up costs (documented UPPER
+ * bounds, see bonuses/cooking.mjs mealCostToNext) reach past 1e150. Printing those through the
+ * plain w1-w3.html fmt() would emit a 20+ digit number, which is its own kind of number-soup —
+ * so this page's fmt() falls back to compact scientific notation once a value crosses 1e15.
+ * (This page's own module doesn't currently print any numbers through it — kept for parity
+ * with the other four W4 split pages, and so a future live Lab module can drop numbers in
+ * without re-deriving the fallback.) */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* ============================================================================================
+ * MODULE — Lab: thin status strip + cross-links. No entities.w4.lab exists yet — see the
+ * gap list below for what a real module would need (server-side pieces already exist but
+ * aren't wired into any domain.mjs entity; this page must not add new backend, per scope).
+ * This module reads NO entities.w4 data at all — the tiles below are static cross-link text,
+ * not live save-derived numbers, so boot() doesn't need to check for a w4 entity.
+ * ============================================================================================ */
+function renderLab() {
+  $("labPanel").style.display = "";
+  $("labPanel").innerHTML = `
+    <h2>${UI.sprite("Laboratory", 20, "afk_targets")} Lab <span class="hint">Mainframe nodes, jewels and chips — not yet surfaced as a save-derived entity on this page.</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile pending">${UI.sprite("Laboratory", 28, "afk_targets")}<div class="label">Mainframe connectivity</div><div class="value">—</div><div class="sub">no entities.w4 data yet</div></div>
+      <div class="tile"><div class="label">Meal global multi — Lab jewel term</div><div class="value"><a href="stats.html?recipe=mealBonuses" style="font-size:14px">see breakdown ↗</a></div><div class="sub">jewel 116, currently unread → lower bound</div></div>
+      <div class="tile"><div class="label">Kitchen speed — Lab jewel terms</div><div class="value"><a href="stats.html?recipe=kitchenSpeed" style="font-size:14px">see breakdown ↗</a></div><div class="sub">jewels 100 &amp; 114, currently unread → lower bound</div></div>
+    </div>
+    <div class="gapbox">
+      <h3>Why there's no Lab module yet</h3>
+      <p>A connectivity FLOOR SOLVER already exists server-side (<code>bonuses/labboard.mjs</code> — 18 mainframe nodes + 24 jewels, proven-or-unknown, never guessed) and node/jewel geometry is fully extracted (<code>gamedata-lab.mjs</code>). But <b>domain.mjs exposes none of it as an entity</b> — every page must read <code>entities.w4</code>, and today that object has no <code>lab</code> key. This page is scoped to NOT add new backend, so it stops at these cross-links instead of guessing at a shape.</p>
+      <h3>What the interview pass needs to unblock a real Lab module</h3>
+      <ul>
+        <li>A <code>domain.mjs</code> <code>e.w4.lab</code> entity wrapping <code>solveLab(ctx)</code>'s proven node/jewel connectivity, plus each node's off/on value pair (from <code>bonuses/lab.mjs</code>'s <code>LAB_ROWS</code> — currently 16 of 18 node ids covered, ids 8/15 need an evidence pass).</li>
+        <li>Per-character equipped chips (<code>savemap</code> already has <code>sel.labChips</code>) surfaced per-char — <code>bonuses/chips.mjs</code> only resolves 3 of ~70 possible chip keys (<code>dr</code>/<code>card1</code>/<code>card2</code>) today, so a chip-rotation table needs the rest of <code>gamedata-cards.mjs</code>'s <code>CHIP_KEY</code>/<code>CHIP_VALUE</code> audited against N.js.</li>
+        <li>A product decision on what the module should actually recommend: line-width/range priority for a still-unconnected node vs. jewel purchase priority vs. chip loadout — the research pass flagged this as a "weaker push-higher fit" since the underlying mechanic is a binary connected/not-connected outcome, not a smooth stat.</li>
+      </ul>
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot. renderLab() reads no entities.w4 data at all (static cross-link tiles + gap text only),
+ * so this only needs state.snapshot for the meta timestamp — no /api/stats or /api/w4 fetch,
+ * and no entities.w4 existence check, per the scoping of this thin stub.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+
+    renderLab();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

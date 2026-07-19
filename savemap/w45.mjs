@@ -56,6 +56,19 @@ export default {
     confidence: "confirmed",
   },
 
+  "Ribbon": {
+    name: "ribbon",
+    family: false,
+    shape: "array",             // flat list, padded so [28+mealIdx] maps to meal mealIdx (0..73)
+    parse: "json",
+    desc: "Cooking meal RIBBON ranks. Padded to MealINFO.length+28 so index [28+mealIdx] is the ribbon rank of meal mealIdx.",
+    idx: {
+      "[28+mealIdx]": "CONFIRMED: ribbon rank of meal `mealIdx`. Read as `Summoning('RibbonBonus', Ribbon[Math.round(28+g)], 0)` inside the MealBonusesS builder (N.js:6214). The padding loop `for(;Ribbon.length-28<MealINFO.length;)Ribbon.push(0)` (N.js:9438) guarantees the 1:1 offset. Slots [0..27] are earlier ribbon systems.",
+    },
+    evidence: "N.js MealBonusesS builder at flat~6214 multiplies each meal bonus by Summoning('RibbonBonus', Ribbon[28+g]); pad loop at ~9438. Saved via addSaveEntryList('Ribbon').",
+    confidence: "confirmed",
+  },
+
   // ─────────────────────────────────────────── PETS / BREEDING ───────────────────────────────────────────
   "Pets": {
     name: "pets",

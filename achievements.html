@@ -4,82 +4,39 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Achievement Tracker — IdleOn Command Center</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
 <style>
-  :root {
-    color-scheme: dark;
-    --surface-1: #1a1a19; --page: #0d0d0d;
-    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
-    --grid: #2c2c2a; --baseline: #383835;
-    --border: rgba(255,255,255,0.10);
-    --series-1: #3987e5; --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
-    --delta-good: #0ca30c;
-  }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --surface-1: #fcfcfb; --page: #f9f9f7;
-    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
-    --grid: #e1e0d9; --baseline: #c3c2b7;
-    --border: rgba(11,11,11,0.10);
-    --series-1: #2a78d6; --delta-good: #006300;
-  }
-  * { box-sizing:border-box; margin:0; }
-  body { background:var(--page); color:var(--ink-1); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:14px; line-height:1.45; padding:20px; max-width:1080px; margin:0 auto; }
-  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
-  header h1 { font-size:21px; font-weight:650; }
-  header .spacer { flex:1; }
-  nav.pages { display:flex; gap:2px; border:1px solid var(--border); border-radius:10px; padding:2px; }
-  nav.pages a { color:var(--ink-2); text-decoration:none; font-size:12.5px; padding:4px 12px; border-radius:8px; }
-  nav.pages a.here { background:var(--series-1); color:#fff; }
-  nav.pages a:hover:not(.here) { background:var(--grid); }
-  button.ghost { background:none; border:1px solid var(--border); color:var(--ink-2); border-radius:8px; padding:5px 11px; font:inherit; font-size:12.5px; cursor:pointer; }
-  button.ghost:hover { background:var(--surface-1); }
-  #syncState { font-size:12px; color:var(--ink-muted); }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
-  .tile { background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
-  .tile .label { color:var(--ink-muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
-  .tile .value { font-size:24px; font-weight:650; margin-top:2px; font-variant-numeric:tabular-nums; }
-  .tile .sub { color:var(--ink-2); font-size:12px; margin-top:2px; }
   .controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
-  .controls .tabs, .controls .worlds { display:flex; gap:4px; }
-  .controls button.f { background:none; border:1px solid var(--border); border-radius:999px; color:var(--ink-2); padding:3px 12px; font:inherit; font-size:12.5px; cursor:pointer; }
-  .controls button.f.active { border-color:var(--series-1); color:var(--ink-1); }
-  .controls input { background:var(--surface-1); border:1px solid var(--border); color:var(--ink-1); border-radius:8px; padding:5px 10px; font:inherit; font-size:12.5px; width:180px; }
-  .controls label { font-size:12.5px; color:var(--ink-2); display:flex; align-items:center; gap:5px; cursor:pointer; }
-  section.panel { background:var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:6px 16px; margin-bottom:14px; }
-  section.panel h2 { font-size:13.5px; font-weight:650; padding:10px 0 6px; color:var(--ink-1); }
-  section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; margin-left:6px; }
+  .controls .tabs, .controls .worlds { display:flex; gap:4px; margin-bottom:0; }
+  .controls input { width:180px; }
   .ach { display:flex; gap:12px; padding:9px 2px; border-top:1px solid var(--grid); align-items:flex-start; }
   .ach:first-of-type { border-top:none; }
   .ach .st { flex:none; width:20px; text-align:center; font-size:14px; margin-top:1px; }
   .ach .st.done { color:var(--good); }
   .ach .body { flex:1; min-width:0; }
-  .ach .nm { font-weight:600; font-size:13.5px; }
-  .ach .nm .tag { font-size:10.5px; font-weight:500; border:1px solid var(--border); color:var(--ink-muted); border-radius:4px; padding:0 5px; margin-left:6px; vertical-align:1px; }
+  .ach .nm { font-weight:700; font-size:13.5px; }
+  .ach .nm .tag { font-size:10.5px; font-weight:600; border:1px solid var(--border); color:var(--ink-muted); border-radius:5px; padding:0 5px; margin-left:6px; vertical-align:1px; }
   .ach .nm .tag.hard { color:var(--serious); border-color:var(--serious); }
   .ach .desc { color:var(--ink-2); font-size:12.5px; margin-top:1px; }
   .ach .prog { flex:none; width:180px; text-align:right; }
   .ach .prog .pct { font-size:12.5px; font-variant-numeric:tabular-nums; color:var(--ink-2); }
-  .bar-bg { background:var(--grid); border-radius:4px; height:7px; overflow:hidden; margin-top:5px; }
-  .bar-fill { background:var(--series-1); height:100%; border-radius:4px; }
+  .bar-bg { margin-top:5px; height:7px; }
   .pin { flex:none; background:none; border:none; color:var(--baseline); cursor:pointer; font-size:15px; padding:0 2px; margin-top:1px; }
   .pin.on { color:var(--warning); }
   .empty-note { color:var(--ink-muted); font-size:12.5px; padding:12px 0; }
   #noData { text-align:center; padding:60px 0; color:var(--ink-2); }
-  .foot { color:var(--ink-muted); font-size:11.5px; margin:14px 0 30px; }
+  section.panel h2 { font-size:13.5px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>Achievement Tracker</h1>
-  <nav class="pages">
-    <a href="dashboard.html">Dashboard</a>
-    <a class="here" href="achievements.html">Achievements</a>
-    <a href="sailing.html">Sailing</a>
-  </nav>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/Ribbon0.png" alt="" width="26" height="26">Achievements</h1>
+  <nav class="pages"></nav>
   <div class="spacer"></div>
   <span id="syncState">—</span>
   <button class="ghost" id="syncBtn" style="display:none">Sync now</button>
-  <button class="ghost" id="themeBtn">Theme</button>
+  <span id="uiOptions"></span>
 </header>
 
 <div id="noData">No save data found — open the <a href="dashboard.html" style="color:var(--series-1)">Dashboard</a> first (connect or drop a savegame.json there).</div>
@@ -233,7 +190,6 @@ $("statusTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.sta
 $("worldTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.world=+b.dataset.v; $("worldTabs").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); renderLists(); });
 $("catTabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{ FILTER.cat=b.dataset.v; $("catTabs").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b)); renderLists(); });
 $("q").oninput = (e)=>{ FILTER.q=e.target.value.trim().toLowerCase(); renderLists(); };
-$("themeBtn").onclick = ()=>{ const r=document.documentElement; r.dataset.theme = r.dataset.theme==="light" ? "" : "light"; };
 
 /* sync (server mode via companion.mjs, else direct browser sync) */
 const SRV = () => window.IdleonSync && IdleonSync.SERVER;

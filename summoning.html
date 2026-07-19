@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Summoning — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  select.inlinesel { font-size: 12px; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .gapbox { border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; color: var(--ink-2); font-size: 12.5px; }
+  .gapbox h3 { font-size: 13px; color: var(--ink-1); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Endless_Summoning.png" alt="" width="26" height="26">Summoning</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="stonesPanel" style="display:none"></section>
+<div id="rmod_armyHealth"></div>
+<div id="rmod_armyDamage"></div>
+<div id="rmod_winBonus"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, DATA = null, GLOSS = null, SERIES = {};
+let SUM = null;   // SNAP.entities.w6.summoning shortcut
+let CHARSEL = {}, SHOWALL = {};
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+function charName(i) { return SNAP?.charNames?.[i] ?? ("char " + i); }
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const s = SUM;
+  const diff = s.endlessDifficulty;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Summoning", 28, "afk_targets")}<div class="label">Army Health</div><div class="value">×${fmt(s.armyHealth)}</div><div class="sub"><a href="#mod_armyHealth">full breakdown ↓</a></div></div>
+    <div class="tile">${UI.sprite("Summoning", 28, "afk_targets")}<div class="label">Army Damage</div><div class="value">${(s.armyDamageLowerBound ? "≥ " : "") + "×" + fmt(s.armyDamage)}</div><div class="sub"><a href="#mod_armyDamage">full breakdown ↓</a></div></div>
+    <div class="tile">${UI.sprite("Endless_Summoning", 28, "etc")}<div class="label">Winner Bonus index</div><div class="value">${fmt(s.winBonusIndex)}</div><div class="sub"><a href="#mod_winBonus">32 slots ↓</a></div></div>
+    <div class="tile"><div class="label">Endless mode best</div><div class="value">${s.endlessUnlocked ? fmt(s.endlessBest) : "locked"}</div><div class="sub">${diff ? diff.name.replace(/_/g, " ") : (s.endlessUnlocked ? "no wins yet" : "unlock via Summon Upgrade 70")}</div></div>
+    <div class="tile"><div class="label">Matches won</div><div class="value">${fmt(s.matchesWon)}</div><div class="sub">defeated Death Note roster</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Upgrades summary (aggregate only — no per-upgrade level array in entities.w6.summoning yet)
+ * + Summoning Stones table (7 boss stones, kills -> essence multiplier).
+ * ============================================================================================ */
+function stoneRowHtml(st) {
+  return `<tr>
+    <td><b>${st.name[0].toUpperCase() + st.name.slice(1)}</b> <span class="note">(${st.essenceColor})</span></td>
+    <td class="note">${st.territory}</td>
+    <td style="text-align:right">${fmt(st.kills)}</td>
+    <td style="text-align:right">×${fmt(st.essenceMultiplier)}</td>
+  </tr>`;
+}
+
+function renderStones() {
+  const s = SUM;
+  $("stonesPanel").style.display = "";
+  $("stonesPanel").innerHTML = `
+    <h2>${UI.sprite("Boss6", 20, "data")} Summoning Stones &amp; Upgrades <span class="hint">7 boss-territory stones — kills raise that colour's essence generation multiplier.
+      <span class="tip" title="essenceMultiplier = max(2, 1 + kills on that stone's boss). Verbatim N.js formula, no cap.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile"><div class="label">Upgrades bought</div><div class="value">${s.upgradesBought}<span class="of">/${s.upgradesTotal}</span></div><div class="sub">Summon Upgrade tree</div></div>
+      <div class="tile"><div class="label">Total upgrade levels</div><div class="value">${fmt(s.totalUpgradeLevels)}</div><div class="sub">feeds HP/DMG Laundering (every 100 levels)</div></div>
+    </div>
+    <div class="scroll"><table><tr><th>Stone</th><th>Territory</th><th style="text-align:right">Kills</th><th style="text-align:right">Essence multi</th></tr>${s.stones.map(stoneRowHtml).join("")}</table></div>
+    <div class="gapbox" style="margin-top:12px">
+      <h3>Per-upgrade breakdown — deferred</h3>
+      <p>entities.w6.summoning currently exposes upgrade COUNTS only (bought/total, total levels) — not a per-upgrade level array, so a "which upgrades are behind" table isn't buildable yet. Adding a per-upgrade level list to domain.mjs's Summoning entity (82 rows, name/level/cost-to-next from gamedata-w6-summoning.mjs's SUMMON_UPGRADES) is a clean follow-up pass.</p>
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for armyHealth / armyDamage / winBonus — same pattern as
+ * w1-w5.html's RECIPE_MODULES.
+ * ============================================================================================ */
+const RECIPE_MODULES = [
+  { name: "armyHealth", title: "Army HP Multiplier", icon: ["Summoning", "afk_targets"],
+    blurb: "The total-army HP multiplier applied to every summoned unit in a competition." },
+  { name: "armyDamage", title: "Army DMG Multiplier", icon: ["Summoning", "afk_targets"],
+    blurb: "The total-army DMG multiplier applied to every summoned unit in a competition." },
+  { name: "winBonus", title: "Summoning Winner Bonuses (32 slots)", icon: ["Endless_Summoning", "etc"],
+    blurb: "Each of the 32 winner-bonus slots is an independent account-wide bonus — career wins + Endless rounds feed all of them at once." },
+];
+
+function currentResult(cfg, st) {
+  const sel = CHARSEL[cfg.name] || "account";
+  if (sel !== "account" && st.byChar) {
+    const c = st.byChar.find((x) => String(x.charIdx) === sel);
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, eqMult, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const eq = eqMult(t);
+  const shownVal = isPoints ? rawVal
+    : t.kind === "mul" ? "×" + fmt(eq)
+    : `×${eq >= 1.1 ? eq.toFixed(2) : eq.toFixed(3)}<div class="expr">${rawVal} of pool</div>`;
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="expander" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:340px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${shownVal}</td>
+      <td>${chip(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function lockedRow(t, disp) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  return `<tr class="dim">
+    <td style="max-width:340px"><b>${label}</b>${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+    <td style="text-align:right">—</td>
+    <td><span class="chip dead">locked/inactive</span></td>
+    <td></td>
+    <td class="note">${d.how || t.note || "Not contributing right now — the source system is locked or inactive on this account."}</td>
+  </tr>`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet.</p>
+  </section>`;
+}
+
+function liveModuleHTML(cfg, st) {
+  if (!(cfg.name in CHARSEL)) CHARSEL[cfg.name] = "account";
+  const r = currentResult(cfg, st);
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked, eqMult } = bucketTerms(r);
+  const unknownCount = r.unknown.length;
+  const perCharCount = r.terms.filter((t) => t.status === "per-char").length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const caveat = (r.lowerBound || perCharCount) ? `<div class="lowerbound">
+    <b>Lower bound.</b> ${unknownCount ? `${unknownCount} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher.` : "Minor inputs remain unknowable — the real value can only be higher."}
+  </div>` : "";
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "x");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span></h2>
+    ${caveat}
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount - perCharCount}<span class="of">/${r.terms.length}</span></div>
+        <div class="sub">sources computed</div></div>
+      ${locked.length ? `<div class="tile"><div class="label">Locked / inactive</div><div class="value">${locked.length}</div><div class="sub">not contributing right now</div></div>` : ""}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, eqMult, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${locked.length ? `<details class="fold" style="margin-top:6px"><summary>${locked.length} locked/inactive source${locked.length > 1 ? "s" : ""}</summary>
+      <div class="scroll"><table>${locked.map((t) => lockedRow(t, disp)).join("")}</table></div>
+    </details>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander[data-mod]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w6) {
+      $("err").innerHTML = `No <code>w6</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    SUM = SNAP.entities.w6.summoning;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w6")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdowns below.";
+
+    renderTiles();
+    renderStones();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

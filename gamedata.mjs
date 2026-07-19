@@ -37,21 +37,37 @@ export const ARCADE_ARTIFACT_ROWS = { 32: { b: 50, c: 100, mode: "decay" }, 66: 
  *  nothing, and the CJK glyphs a real save carries in Gaming[12] ("肢","者","肖","答",...) appear
  *  ZERO times in the client. So ids >= 53 are not recoverable from N.js at all. Callers that index
  *  past the end get `undefined` and MUST treat that as unknown, not as "not owned" — see
- *  superBitType() in artifactchance.mjs. */
+ *  superBitType() in bonuses/gaming.mjs. */
 export const NUMBER_2_LETTER = ["_", ..."abcdefghijklmnopqrstuvwxyz", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
 
 /* --- Legend Talents (Ya.LegendTalents) ----------------------------------- */
 /** field [2] = coefficient; level is Spelunk[18][id]. Thingies("LegendPTS_bonus",b,0) =
  *  round(Spelunk[18][b] * LegendTalents[b][2]) — verified in N.js _customBlock_Thingies.
  *  Only the ids the artifact chain needs are listed; add more as they're confirmed. */
-export const LEGEND_TALENT_COEFF = { 10: 25, 11: 15 };   // 10 Picasso_Gaming, 11 Davey_Jones_Returns
+export const LEGEND_TALENT_COEFF = {
+  1: 500,   // Greatest_Drop_Party_Ever, max LV 4 — "+{%_Drop_Rate ... This_bonus_is_additive,_not_a_multiplier."
+  10: 25,   // Picasso_Gaming
+  11: 15,   // Davey_Jones_Returns
+  21: 15,   // Flopping_a_Full_House, max LV 5 — scales EVERY equipped card's bonus in the CardBonusS builder
+  24: 20,   // May_the_Best_Man_Win, max LV 1 — feeds MeritocBonuszMulti
+  3: 10,    // Extended_Database, max LV 3 — "+{_Max_LV_for_5th_column_of_Farming_Land_Rank_Database" (LegendTalents[3] @N.js:24193)
+  5: 10,    // Kruk_be_Bubblin', LegendTalents[5][2]=10 — feeds Thingies("KrukBubblesDaily") (verified N.js LegendTalents index 5)
+  7: 10,    // Super_Duper_Talents, max LV 5 — "Super_Talent_PTS_give_+{_more_LVs" (feeds SuperTalentPTS_LVgiven in AllTalentLV)
+  8: 100,   // Buy_One_Get_One_Free, max LV 2 — "}x_more_LVs_when_buying_Exotic_Market_upgrades" (feeds ExoticLVQTY)
+  19: 75,   // More_Soot_More_Salt, max LV 2 — "}x_faster_Refinery_cycles" (LegendTalents[19] raw "More_Soot_More_Salt 2 75 filler", N.js; feeds Thingies("LegendPTS_bonus",19,0) in the refinery CycleInitialTime formula)
+};
 
 /* --- Equipment sets (La.EquipmentSets) ----------------------------------- */
 /** [3][2] = the set's bonus value. GetSetBonus(name,"Bonus",0,0) returns it when the set is
  *  PERMANENTLY UNLOCKED (its name is in the OptLacc[379] CSV) OR when enough pieces are equipped
  *  — verified in N.js _customBlock_GetSetBonus, "Bonus"==b branch. The perma-unlock arm is why
  *  these do NOT need the active character's gear. */
-export const SET_BONUS_VAL = { TROLL_SET: 25, GODSHARD_SET: 15 };
+export const SET_BONUS_VAL = {
+  TROLL_SET: 25, GODSHARD_SET: 15,
+  EFAUNT_SET: 25,       // ["0","0","25","+{%_Drop_Rate",...] — verified in La.EquipmentSets
+  KATTLEKRUK_SET: 5,    // ["0","1","5","+{_LV_for_all_Talents",...] — feeds AllTalentLV
+  COPPER_SET: 60,       // ["1","0","60","+{%_Mining_and|Chopping_Efficiency",...] @N.js:24673 (EquipmentSets literal) — mining/choppin eff
+};
 
 /* --- Summoning WinBonus (na.SummonEnemies) ------------------------------- */
 /** [0] enemy names, [5] winner-bonus slot (1-based; "_" = none), [7] value per defeat. */
@@ -86,3 +102,9 @@ export const VAULT_COEFF = [1,1,2,2,1,1,1,2,1,1,10,5,2,4,5,1,2,2,1,2,2,5,1,1,5,2
  *  exempt chain in _customBlock_Summoning("VaultUpgBonus")). Everything else gets the
  *  mastery of its band. */
 export const VAULT_NO_MASTERY = [32,1,6,7,8,9,13,999,33,36,40,42,43,44,49,51,52,53,57,61,89,64,70,73,74,76,79,85,86,88];
+
+/* --- Pet (companion) display names ---------------------------------------
+ * From Morta1/IdleonToolbox's companions list; alignment VERIFIED: its rawName column matches
+ * COMPANION_NAME above index-for-index (0 mismatches over 170 entries). In-game these are
+ * called PETS (the follower system). */
+export const PET_NAME = {"0": "King Doot", "1": "Rift Slug", "2": "Dedotated Ram", "3": "Crystal Custard", "4": "Sheepie", "5": "Molti", "6": "Bored Bean", "7": "Slime", "8": "Sandy Pot", "9": "Bloque", "10": "Frog", "11": "Glunko Supreme", "12": "Ancient Golem", "13": "Samurai Guardian", "14": "Rift Jocund", "15": "Leek Spirit", "16": "Crystal Capybara", "17": "Biggole Mole", "18": "Gigafrog", "19": "Mashed Potato", "20": "Flying Worm", "21": "Poisonic Frog", "22": "Quenchie", "23": "Green Mushroom", "24": "Cool Bird", "25": "Axolotl", "26": "Mallay", "27": "Spirit Reindeer", "28": "RIP Tide", "29": "Squirrel", "30": "Mr Pig", "31": "Wild Boar", "32": "Whale", "33": "Chippy", "34": "Bunny", "35": "Panda", "36": "Hedgehog", "37": "Whallamus", "38": "Balloonfish", "39": "Pufferblob", "40": "Shellslug", "41": "Crystal Cuttlefish", "42": "Eamsy Earl", "43": "Litterfish", "44": "Spearfish", "45": "Equinox Broadbass", "46": "Mafioso", "47": "Baby Boa", "48": "Purp Mushroom", "49": "Bubba the Seal", "50": "Santa Snake", "51": "Santas Little Helper", "52": "Jellofish", "53": "Koi Fish", "54": "Neonscale", "55": "Pirate Deckhand", "56": "Magni Pufferfin", "57": "Dreadnaught Captain", "58": "Bubba Supreme", "59": "Nutto", "60": "Biggie Hours", "61": "Baba Yaga", "62": "Walking Stick", "63": "Carrotman", "64": "Demon Hound", "65": "Gloomie Mushroom", "66": "Crabcake", "67": "Mr Blueberry", "68": "Crystal Carrot", "69": "Crystal Crabal", "70": "Crystal Cattle", "71": "Crystal Candalight", "72": "Demon Genie", "73": "Eldritch Croaker", "74": "Lava Slimer", "75": "King Frog", "76": "Ghost", "77": "Glublin", "78": "Mamooth", "79": "Mimic", "80": "Moonmoon", "81": "Red Mushroom", "82": "Wood Mushroom", "83": "Pincermin", "84": "Wode Board", "85": "Crescent Spud", "86": "Rat", "87": "Rift Spooker", "88": "Rift Hivemind", "89": "Floofie", "90": "Sand Castle", "91": "Sand Giant", "92": "Dig Doug", "93": "shovel", "94": "Xylobone", "95": "Bloodbone", "96": "Glunko The Massive", "97": "slimmer", "98": "Snelbie", "99": "Cryosnake", "100": "Shell Snake", "101": "Snowman", "102": "Bop Box", "103": "Tyson", "104": "Beefie", "105": "Thermister", "106": "TV", "107": "Donut", "108": "Soda Can", "109": "Gelatinous Cuboid", "110": "Choccie", "111": "Clammie", "112": "Octodar", "113": "Flombeige", "114": "Stilted Seeker", "115": "Suggma", "116": "Maccie", "117": "Mister Brightside", "118": "Cheese Nub", "119": "Stiltmole", "120": "Citringe", "121": "Lampar", "122": "Fire Spirit", "123": "Crawler", "124": "Tremor Wurm", "125": "Sprout Spirit", "126": "Ricecake", "127": "River Spirit", "128": "Baby Troll", "129": "Woodlin Spirit", "130": "Bamboo Spirit", "131": "Lantern Spirit", "132": "Mama Troll", "133": "Ceramic Spirit", "134": "Skydoggie Spirit", "135": "Royal Egg", "136": "Minichief Spirit", "137": "Doodlefish", "138": "Noble Clam", "139": "Demonblub", "140": "Coralcave Crab", "141": "Coralcave Guardian", "142": "Trench Fish", "143": "Boomy Mine", "144": "Pirate Underling", "145": "Eggroll", "146": "Kelpfish", "147": "Mantaray", "148": "w7b8zzz", "149": "w7b9zzz", "150": "Bronze Champion Ram", "151": "Silver Champion Ram", "152": "Gold Champion Ram", "153": "Rift Stalker", "154": "Glimbo", "155": "Vanillie", "156": "Valenslime", "157": "Mechanical Mouse", "158": "Lucky Slug", "159": "Potluck", "160": "Glunko The Massive", "161": "Poppy", "162": "Wickerlight Spirit", "163": "Smoke Devil", "164": "Bronze Champion Troll", "165": "Silver Champion Troll", "166": "Gold Champion Troll", "167": "Abacus Frog", "168": "Crystal Glunko", "169": "Bin Goosey"};

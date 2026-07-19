@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Account Levers (W7) — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .rewardladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .rewardladder span { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .rewardladder span.got { border-color: rgba(12,163,12,.5); color: var(--good); }
+  .rewardladder span.next { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .gapbox { border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; color: var(--ink-2); font-size: 12.5px; margin-top: 12px; }
+  .gapbox h3 { font-size: 13px; color: var(--ink-1); margin-bottom: 6px; }
+  .taskgrid { display: grid; grid-template-columns: 1fr; gap: 3px; font-size: 11.5px; color: var(--ink-2); max-height: 260px; overflow-y: auto; }
+  .taskgrid div { padding: 3px 6px; border-radius: 4px; }
+  .taskgrid div:nth-child(odd) { background: var(--well); }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/ZenithBG.png" alt="" width="26" height="26">Account Levers — W7</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="caveat">Five small W7 leaf systems, one page each too thin to justify its own nav entry — Zenith Market, Coral Reef, Clam Work, Advice Fish, and The Button. If you'd rather have these fully split into their own pages, that's a quick follow-up; flagged as an interview item.</div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="zenithPanel" style="display:none"></section>
+<section class="panel" id="coralPanel" style="display:none"></section>
+<section class="panel" id="clamPanel" style="display:none"></section>
+<section class="panel" id="advicePanel" style="display:none"></section>
+<section class="panel" id="buttonPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, GLOSS = null;
+let W = null;   // SNAP.entities.w7 shortcut
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* Known consumers of Zenith Market rows — cross-linked into the recipes that already read them
+ * (see stats/kruk-bubbles.mjs "zenith4", stats/class-xp.mjs "zenith9", stats/statue-multi.mjs
+ * "zenith", bonuses/holes.mjs lampBonus, bonuses/talents.mjs superTalentLvGiven). Display-only
+ * cross-reference, not part of any recipe. */
+const ZENITH_CONSUMERS = {
+  0: { label: "Statue Bonus Multiplier", href: "stats.html?recipe=statueMulti" },
+  2: { label: "Cavern Lamp bonus", href: "cavern.html" },
+  4: { label: "Bubble LVs / Day", href: "stats.html?recipe=krukBubbles" },
+  5: { label: "Super Talent points-given", href: null },
+  9: { label: "Class EXP", href: "stats.html?recipe=classXp" },
+};
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const zenithLv = W.zenith.levels.reduce((a, r) => a + r.level, 0);
+  const coralLv = W.coralReef.coralKid.reduce((a, r) => a + r.level, 0) + W.coralReef.buildings.reduce((a, r) => a + r.level, 0);
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("ZenithBG", 28, "data")}<div class="label">Zenith Market levels</div><div class="value">${fmt(zenithLv)}</div><div class="sub">summed across 10 rows</div></div>
+    <div class="tile"><div class="label">Coral Reef levels</div><div class="value">${fmt(coralLv)}</div><div class="sub">Coral Kid + Reef buildings</div></div>
+    <div class="tile"><div class="label">Clam Work job</div><div class="value">Lv ${W.clamWork.jobLevel}<span class="of">/9</span></div><div class="sub">Mr. Musselini's promotion ladder</div></div>
+    <div class="tile"><div class="label">Advice Fish levels</div><div class="value">${fmt(W.adviceFish.levels.reduce((a, r) => a + r.level, 0))}</div><div class="sub">summed across 6 rows</div></div>
+    <div class="tile"><div class="label">Button presses</div><div class="value">${fmt(W.button.presses)}</div><div class="sub">cycles through ${W.button.tasksTotal} possible tasks</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Zenith Market — 10 rows, cross-noted against the recipes that already consume them.
+ * ============================================================================================ */
+function zenithRowHtml(r, i, desc) {
+  const consumer = ZENITH_CONSUMERS[i];
+  return `<tr>
+    <td><b>${r.id}</b>${desc ? `<div class="where">${desc}</div>` : ""}
+      ${consumer ? `<div class="note">feeds: ${consumer.href ? `<a href="${consumer.href}">${consumer.label}</a>` : consumer.label}</div>` : ""}</td>
+    <td style="text-align:right">${r.level}<span class="of">/${r.maxLv}</span></td>
+    <td style="text-align:right">${fmt(r.bonus)}</td>
+  </tr>`;
+}
+function renderZenith() {
+  const descOf = Object.fromEntries((GLOSS?.zenithMarket ?? []).map((z) => [z.id, z.desc]));
+  $("zenithPanel").style.display = "";
+  $("zenithPanel").innerHTML = `
+    <h2>${UI.sprite("ZenithBG", 20, "data")} Zenith Market <span class="hint">The endgame statue-upgrade shop. 5 of its 10 rows already feed OTHER registered recipes on this site — those are cross-linked below.
+      <span class="tip" title="ZenithMarketBonus(b) = floor(coeff x level), verbatim. No unread inputs — fully save-derivable.">ⓘ</span></span></h2>
+    <div class="scroll"><table>
+      <tr><th>Row</th><th style="text-align:right">Level</th><th style="text-align:right">Bonus</th></tr>
+      ${W.zenith.levels.map((r, i) => zenithRowHtml(r, i, descOf[i])).join("")}
+    </table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Coral Reef — Coral Kid upgrades (6, save-backed), Reef buildings (6, save-backed), Dancing
+ * Coral (9, reference only — no owned-level save read wired yet, see gap note).
+ * ============================================================================================ */
+function renderCoral() {
+  const kidDesc = Object.fromEntries((GLOSS?.coralKid ?? []).map((r) => [r.id, r.desc]));
+  const bldDesc = Object.fromEntries((GLOSS?.coralBuildings ?? []).map((r) => [r.id, r.desc]));
+  const dcDesc = Object.fromEntries((GLOSS?.dancingCoral ?? []).map((r) => [r.id, r.desc]));
+  $("coralPanel").style.display = "";
+  $("coralPanel").innerHTML = `
+    <h2>${UI.sprite("CoralDiv", 20, "data")} Coral Reef</h2>
+    <h2 class="subhead">Coral Kid upgrades</h2>
+    <div class="scroll"><table><tr><th>Upgrade</th><th style="text-align:right">Level</th><th style="text-align:right">Bonus</th></tr>
+      ${W.coralReef.coralKid.map((r) => `<tr><td><b>${kidDesc[r.id] ?? r.desc}</b></td><td style="text-align:right">${fmt(r.level)}</td><td style="text-align:right">+${fmt(r.bonus)}</td></tr>`).join("")}
+    </table></div>
+    <h2 class="subhead" style="margin-top:14px">Reef buildings</h2>
+    <div class="scroll"><table><tr><th>Building</th><th style="text-align:right">Level</th></tr>
+      ${W.coralReef.buildings.map((r) => `<tr><td><b>${bldDesc[r.id] ?? r.desc}</b></td><td style="text-align:right">${r.level}<span class="of">/${r.maxLv}</span></td></tr>`).join("")}
+    </table></div>
+    <h2 class="subhead" style="margin-top:14px">Dancing Coral <span class="hint">Reference only — no owned-level save read is wired for this track yet.</span></h2>
+    <div class="scroll"><table><tr><th>Reward</th><th style="text-align:right">Per-level coeff</th></tr>
+      ${W.coralReef.dancingCoral.map((r) => `<tr><td><b>${dcDesc[r.id] ?? r.desc}</b></td><td style="text-align:right">${fmt(r.coeff)}</td></tr>`).join("")}
+    </table></div>
+    <div class="gapbox">
+      <h3>Deferred: Dancing Coral levels</h3>
+      <p>DancingCoralBonus needs Spelunk[4][7] (a "Grind Time" discount input) and TowerInfo[18+b] (the W3 Atom Collider) to compute an owned bonus — both are savemap gaps noted in gamedata-w7-coralreef.mjs. The table above lists what each reward slot CAN give, not what you currently have.</p>
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Clam Work — job level + promotion ladder, 9 upgrades.
+ * ============================================================================================ */
+function renderClam() {
+  const upgDesc = Object.fromEntries((GLOSS?.clamUpgrades ?? []).map((r) => [r.id, r.desc]));
+  const ladder = W.clamWork.jobs.map((j) =>
+    `<span class="${j.reached ? "got" : ""}" title="${j.reward}">Lv ${j.level}</span>`).join("");
+  $("clamPanel").style.display = "";
+  $("clamPanel").innerHTML = `
+    <h2>${UI.sprite("Clammie", 20, "afk_targets")} Clam Work <span class="hint">Mr. Musselini's job ladder — 9 promotions, each granting a fixed account-wide reward.</span></h2>
+    <div class="rewardladder">${ladder}</div>
+    <h2 class="subhead" style="margin-top:14px">Job rewards</h2>
+    <div class="scroll"><table><tr><th>Promotion</th><th>Reward</th><th>Reached</th></tr>
+      ${W.clamWork.jobs.map((j) => `<tr><td>Lv ${j.level}</td><td class="note">${j.reward}</td><td>${j.reached ? '<span class="chip live">yes</span>' : '<span class="chip dead">no</span>'}</td></tr>`).join("")}
+    </table></div>
+    <h2 class="subhead" style="margin-top:14px">Upgrades</h2>
+    <div class="scroll"><table><tr><th>Upgrade</th><th style="text-align:right">Level</th></tr>
+      ${W.clamWork.upgrades.map((r) => `<tr><td><b>${upgDesc[r.id] ?? r.name}</b></td><td style="text-align:right">${fmt(r.level)}</td></tr>`).join("")}
+    </table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Advice Fish (BigFish) — 6 levels, all fully save-derivable.
+ * ============================================================================================ */
+function renderAdvice() {
+  const desc = Object.fromEntries((GLOSS?.adviceFish ?? []).map((r) => [r.id, r.desc]));
+  $("advicePanel").style.display = "";
+  $("advicePanel").innerHTML = `
+    <h2 class="subhead">Advice Fish <span class="hint">6 small W7-only bonuses, all fully save-derivable — no unread inputs.</span></h2>
+    <div class="scroll"><table><tr><th>Advice</th><th style="text-align:right">Level</th><th style="text-align:right">Bonus</th></tr>
+      ${W.adviceFish.levels.map((r) => `<tr><td><b>${desc[r.id] ?? r.name}</b></td><td style="text-align:right">${fmt(r.level)}</td><td style="text-align:right">+${fmt(r.bonus)}%</td></tr>`).join("")}
+    </table></div>
+  `;
+}
+
+/* ============================================================================================
+ * The Button — presses + task pool reference. currentTask is honestly unknown (needs a
+ * runtime shuffle table, CustomLists.Research[39], not embedded in N.js).
+ * ============================================================================================ */
+function renderButton() {
+  const tasks = GLOSS?.buttonTasks ?? [];
+  $("buttonPanel").style.display = "";
+  $("buttonPanel").innerHTML = `
+    <h2 class="subhead">The Button <span class="hint">A rotating daily account-wide requirement (e.g. "reach 1000 total STR"). Pressing it re-rolls which of 57 tasks is active.
+      <span class="tip" title="Button_Task() indexes a 100-entry runtime shuffle table (CustomLists.Research[39]) that is procedurally assigned, not a static N.js literal — the currently active task can't be derived from the save alone, so it's honestly shown as unknown rather than guessed.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("ButtonG", 28, "etc")}<div class="label">Total presses</div><div class="value">${fmt(W.button.presses)}</div></div>
+      <div class="tile"><div class="label">Current task</div><div class="value">unknown</div><div class="sub">needs a live client read — see (i)</div></div>
+    </div>
+    <details class="fold"><summary>All ${tasks.length} possible tasks (reference)</summary>
+      <div class="taskgrid">${tasks.map((t) => `<div>${t.desc}</div>`).join("")}</div>
+    </details>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w7) {
+      $("err").innerHTML = `No <code>w7</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W = SNAP.entities.w7;
+
+    const glossRes = await fetch("/api/w7");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderZenith();
+    renderCoral();
+    renderClam();
+    renderAdvice();
+    renderButton();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

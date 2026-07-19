@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Header bar — 3 mockups</title>
+<link rel="stylesheet" href="../companion.css">
+<script src="../ui.js"></script>
+<style>
+/* mockup chrome */
+body { max-width: 1280px; }
+header.app { position: static; }               /* three headers on one page — no sticky stacking */
+.mock-top { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+.mock-top h1 { font-size: 19px; font-weight: 800; color: var(--accent); }
+.mock-top p { color: var(--ink-muted); font-size: 12.5px; }
+.mock-top .spacer { flex: 1; }
+section.variant { margin-bottom: 44px; }
+.vlabel { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.vlabel h2 { font-size: 15px; font-weight: 800; }
+.vlabel .tag { font-size: 11px; font-weight: 700; color: var(--accent-ink); background: var(--accent); border-radius: 6px; padding: 1px 7px; }
+.vnotes { color: var(--ink-muted); font-size: 12.5px; margin: 0 0 12px; max-width: 860px; }
+.faux { margin-top: 14px; height: 90px; border: 2px dashed var(--border); border-radius: 16px;
+        display: flex; align-items: center; justify-content: center; color: var(--ink-muted); font-size: 12px; }
+
+/* shared: dropdown plumbing */
+.dd { position: relative; }
+.dd > button.trig { background: none; border: none; color: var(--ink-2); font: inherit; font-size: 13px;
+  font-weight: 650; padding: 5px 14px; border-radius: 9px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.dd > button.trig:hover { background: var(--border-soft); }
+.dd.open > button.trig { background: var(--surface-2); color: var(--ink-1); }
+.dd .caret { font-size: 9px; opacity: .6; }
+.dd-pop { display: none; position: absolute; top: calc(100% + 9px); left: 0; z-index: 60;
+  background: var(--surface-1); border: 2px solid var(--border); border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45), inset 0 1px 0 var(--border-soft); padding: 10px; }
+.dd.open .dd-pop { display: block; }
+
+/* shared: menu rows */
+.mrow { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 8px;
+  font-size: 13px; font-weight: 650; color: var(--ink-1); text-decoration: none; white-space: nowrap; }
+a.mrow:hover { background: var(--border-soft); }
+.mrow.ghost { color: var(--ink-muted); font-weight: 600; cursor: default; }
+.mrow.ghost img.px { opacity: .45; filter: grayscale(.7); }
+.mrow .dot { width: 16px; height: 16px; border-radius: 5px; background: var(--well);
+  border: 1.5px dashed var(--border); flex: none; }
+.pill-soon { font-size: 9.5px; font-weight: 800; letter-spacing: .04em; color: var(--ink-muted);
+  border: 1.5px solid var(--border); border-radius: 6px; padding: 0 5px; margin-left: auto; }
+.mrow.here-mark { background: var(--well); }
+
+/* shared: worlds panel (variant A + C flyouts reuse) */
+.wpanel { display: grid; grid-template-columns: repeat(3, minmax(170px, 1fr)); gap: 4px 18px; }
+.wgroup { padding: 4px 2px; }
+.wgroup h5 { font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-muted); padding: 4px 9px 3px; }
+.wgroup h5 b { color: var(--accent); margin-right: 5px; }
+.pfoot { grid-column: 1 / -1; margin-top: 7px; padding: 7px 9px 2px; border-top: 1.5px solid var(--border-soft);
+  color: var(--ink-muted); font-size: 11.5px; }
+
+/* ---------- variant B: two-row, everything visible ---------- */
+.hdrB { flex-direction: column; align-items: stretch; gap: 9px; }
+.hdrB .row { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; }
+.rail { display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--well); border-radius: 12px; padding: 4px 6px; }
+.rail .glabel { font-size: 10px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-muted); padding: 0 2px 0 7px; }
+.rail .sep { width: 1.5px; height: 20px; background: var(--border); border-radius: 1px; margin: 0 2px; }
+.rail a.chip { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); text-decoration: none;
+  font-size: 12px; font-weight: 650; padding: 4px 8px; border-radius: 8px; }
+.rail a.chip:hover:not(.here) { background: var(--border-soft); }
+.rail a.chip.here { background: var(--accent); color: var(--accent-ink); }
+.rail button.more { background: none; border: 1.5px dashed var(--border); color: var(--ink-muted);
+  font: inherit; font-size: 11px; font-weight: 700; border-radius: 8px; padding: 3px 9px; cursor: pointer; }
+.rail button.more:hover, .rail button.more.on { color: var(--ink-2); border-style: solid; background: var(--border-soft); }
+.drawer { display: none; background: var(--well); border-radius: 12px; padding: 9px 12px; }
+.drawer.open { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.drawer .glabel { font-size: 10px; font-weight: 800; letter-spacing: .07em; color: var(--ink-muted); padding: 0 3px 0 8px; }
+.drawer .gchip { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-muted); font-size: 12px;
+  font-weight: 600; padding: 3px 10px; border-radius: 8px; border: 1.5px dashed var(--border); }
+.drawer .gchip img.px { opacity: .45; filter: grayscale(.7); }
+
+/* ---------- variant C: world pills ---------- */
+.wpill { position: relative; }
+#hdrC { gap: 9px; }
+#hdrC nav.pages .dd > button.trig { padding: 5px 11px; }
+.wpill > button.trig { background: none; border: none; cursor: pointer; font: inherit;
+  display: flex; align-items: center; gap: 5px; padding: 4px 8px; border-radius: 9px;
+  color: var(--ink-1); font-size: 13px; font-weight: 750; }
+.wpill > button.trig .wn { font-size: 10px; font-weight: 800; color: var(--ink-muted); }
+.wpill > button.trig:hover { background: var(--border-soft); }
+.wpill.open > button.trig { background: var(--surface-2); }
+.wpill.dead > button.trig { color: var(--ink-muted); font-weight: 600; }
+.wpill.dead > button.trig img.px { opacity: .45; filter: grayscale(.7); }
+.wpill .planned-n { font-size: 9.5px; font-weight: 800; color: var(--ink-muted);
+  border: 1.5px dashed var(--border); border-radius: 5px; padding: 0 4px; }
+.wname { font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-muted); padding: 3px 9px 6px; white-space: nowrap; }
+.wname b { color: var(--accent); margin-right: 5px; }
+</style>
+</head>
+<body>
+
+<div class="mock-top">
+  <h1>Header bar — pick a direction</h1>
+  <p>Same structure in all three (Dashboard · Worlds · Stats · Account + hints at unbuilt sections) — the difference is how much lives in the bar vs. behind a click. Dropdowns are live, click them.</p>
+  <div class="spacer"></div>
+  <span id="uiOptions"></span>
+</div>
+
+<!-- ============================ A ============================ -->
+<section class="variant">
+  <div class="vlabel"><span class="tag">A</span><h2>Grouped dropdowns</h2></div>
+  <p class="vnotes">Closest to today: the segmented nav keeps four entries no matter how many pages we add,
+    so the header never grows. Worlds opens a world-by-world panel where unbuilt skills sit dimmed with a
+    <em>soon</em> pill; the footer counts coverage. Costs one click to reach any page beyond Dashboard.</p>
+  <header class="app" id="hdrA">
+    <h1><img class="px" src="/idleon-toolbox/public/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Command Center</h1>
+    <nav class="pages">
+      <a class="here" href="../dashboard.html">Dashboard</a>
+      <span class="dd"><button class="trig">Worlds <span class="caret">▼</span></button>
+        <div class="dd-pop" style="min-width:600px"><div class="wpanel" data-render="worlds"></div></div></span>
+      <span class="dd"><button class="trig">Stats <span class="caret">▼</span></button>
+        <div class="dd-pop" data-render="stats"></div></span>
+      <span class="dd"><button class="trig">Account <span class="caret">▼</span></button>
+        <div class="dd-pop" data-render="account"></div></span>
+    </nav>
+    <div class="meta">synced 2 min ago · 11 chars</div>
+    <div class="spacer"></div>
+    <span id="syncState" class="on"><span class="dot"></span>connected</span>
+    <select><option>auto: 5 min</option></select>
+    <button class="ghost">Sync now</button>
+    <button class="ghost">⬇ save</button>
+    <button class="ghost">⚙</button>
+  </header>
+  <div class="faux">page content</div>
+</section>
+
+<!-- ============================ B ============================ -->
+<section class="variant">
+  <div class="vlabel"><span class="tag">B</span><h2>Two rows, everything visible</h2></div>
+  <p class="vnotes">Every built page is one click away, always visible, grouped by tiny labels — no dropdown
+    to open, and "where am I" is obvious. Unbuilt work hides behind the dashed <em>+N soon</em> chips, which
+    expand a drawer listing what's planned per world. Costs vertical space, and the rail will wrap on a
+    narrow window once more pages land.</p>
+  <header class="app hdrB" id="hdrB">
+    <div class="row">
+      <h1><img class="px" src="/idleon-toolbox/public/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Command Center</h1>
+      <div class="meta">synced 2 min ago · 11 chars</div>
+      <div class="spacer"></div>
+      <span id="syncStateB" class="on" style="font-size:11.5px;font-weight:650;color:var(--good)"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:5px"></span>connected</span>
+      <select><option>auto: 5 min</option></select>
+      <button class="ghost">Sync now</button>
+      <button class="ghost">⬇ save</button>
+      <button class="ghost">⚙</button>
+    </div>
+    <div class="row">
+      <div class="rail" id="railB"></div>
+    </div>
+    <div class="drawer" id="drawerB"></div>
+  </header>
+  <div class="faux">page content</div>
+</section>
+
+<!-- ============================ C ============================ -->
+<section class="variant">
+  <div class="vlabel"><span class="tag">C</span><h2>World pills</h2></div>
+  <p class="vnotes">Game-flavored: the nav mirrors IdleOn's world structure. Each built world is its own pill
+    with its lead icon, opening that world's skills — so the
+    roadmap is the navigation. Unbuilt worlds collapse into one dashed range pill (W1–W4 · 10 soon) and
+    graduate to their own pill when their first page lands. Scales cleanly to more skills per world, but
+    single pages like Sailing sit two visual levels deep (world → skill).</p>
+  <header class="app" id="hdrC">
+    <h1><img class="px" src="/idleon-toolbox/public/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Command Center</h1>
+    <nav class="pages" id="navC">
+      <a class="here" href="../dashboard.html">Dashboard</a>
+      <!-- world pills injected here -->
+      <span class="dd"><button class="trig">Stats <span class="caret">▼</span></button>
+        <div class="dd-pop" data-render="stats"></div></span>
+      <span class="dd"><button class="trig">Account <span class="caret">▼</span></button>
+        <div class="dd-pop" data-render="account"></div></span>
+    </nav>
+    <div class="spacer"></div>
+    <span id="syncStateC" class="on" style="font-size:11.5px;font-weight:650;color:var(--good)"><span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:5px"></span>connected</span>
+    <select><option>auto: 5 min</option></select>
+    <button class="ghost">Sync now</button>
+    <button class="ghost">⬇ save</button>
+    <button class="ghost">⚙</button>
+  </header>
+  <div class="faux">page content</div>
+</section>
+
+<script>
+"use strict";
+/* One IA, three renderings. href present = built page; absent = planned (rendered dimmed + "soon"). */
+const sp = (file, dir) => UI.sprite(file, 16, dir);
+const WORLDS = [
+  { n: 1, name: "Blunder Hills",     items: [ { t: "Stamps", ic: ["UIstampB", "data"] }, { t: "Owl" } ] },
+  { n: 2, name: "Yum-Yum Desert",    items: [ { t: "Alchemy", ic: ["AlchBarF1", "data"] }, { t: "Islands" } ] },
+  { n: 3, name: "Frostbite Tundra",  items: [ { t: "Construction", ic: ["ConTower0", "data"] }, { t: "Worship", ic: ["WorshipSkull1", "data"] }, { t: "Equinox", ic: ["Equinox_Mirror", "etc"] } ] },
+  { n: 4, name: "Hyperion Nebula",   items: [ { t: "Lab", ic: ["Laboratory", "afk_targets"] }, { t: "Cooking", ic: ["Cooking", "afk_targets"] }, { t: "Breeding" } ] },
+  { n: 5, name: "Smolderin' Plateau", items: [ { t: "Sailing", href: "../sailing.html", ic: ["Sailing", "afk_targets"] }, { t: "Divinity", ic: ["Divinity", "afk_targets"] }, { t: "Gaming", ic: ["Gaming", "afk_targets"] } ] },
+  { n: 6, name: "Spirited Valley",   items: [ { t: "Farming", href: "../farming.html", ic: ["FarmCrop23", "data"] }, { t: "Land Rank", href: "../landrank.html", ic: ["FarmCrop46", "data"] }, { t: "Sneaking", ic: ["Sneaking_Ninja", "etc"] }, { t: "Summoning", ic: ["Endless_Summoning", "etc"] } ] },
+];
+const STATS = [
+  { t: "Drop Rate",     href: "../stats.html?recipe=dropRate" },
+  { t: "Artifact Find", href: "../stats.html?recipe=artifactFind" },
+  { t: "Crop Evo",      href: "../stats.html?recipe=cropEvo" },
+  { t: "Tome Score",    s: "Tome", href: "../stats.html?recipe=tomeScore" },
+];
+const ACCOUNT = [
+  { t: "Achievements", href: "../achievements.html", ic: ["Ribbon0", "data"] },
+  { t: "Cards",        ic: ["Card_Preset_0", "etc"] },
+  { t: "Companions",   ic: ["Companion_Power", "etc"] },
+  { t: "Guild" },
+];
+
+const icon = (it) => it.ic ? sp(it.ic[0], it.ic[1]) : `<span class="dot"></span>`;
+const row = (it) => it.href
+  ? `<a class="mrow" href="${it.href}">${icon(it)}${it.t}</a>`
+  : `<div class="mrow ghost">${icon(it)}${it.t}<span class="pill-soon">soon</span></div>`;
+
+const built = WORLDS.flatMap(w => w.items).filter(i => i.href).length + STATS.length + ACCOUNT.filter(i => i.href).length + 1;
+const planned = WORLDS.flatMap(w => w.items).filter(i => !i.href).length + ACCOUNT.filter(i => !i.href).length;
+
+/* worlds panel (A) */
+document.querySelector('[data-render="worlds"]').innerHTML =
+  WORLDS.map(w => `<div class="wgroup"><h5><b>W${w.n}</b>${w.name}</h5>${w.items.map(row).join("")}</div>`).join("") +
+  `<div class="pfoot">${built} sections built · ${planned} planned</div>`;
+
+/* stats + account panels (A and C share) */
+document.querySelectorAll('[data-render="stats"]').forEach(el => { el.style.minWidth = "185px"; el.innerHTML = STATS.map(row).join(""); });
+document.querySelectorAll('[data-render="account"]').forEach(el => { el.style.minWidth = "185px"; el.innerHTML = ACCOUNT.map(row).join(""); });
+
+/* ---------- variant B: rail + drawer ---------- */
+const chip = (it, here) => `<a class="chip${here ? " here" : ""}" href="${it.href}">${it.ic ? sp(it.ic[0], it.ic[1]) : ""}${it.s || it.t}</a>`;
+const wBuilt = WORLDS.flatMap(w => w.items).filter(i => i.href);
+const wGhost = WORLDS.filter(w => w.items.some(i => !i.href));
+const aGhostN = ACCOUNT.filter(i => !i.href).length;
+document.getElementById("railB").innerHTML = `
+  ${chip({ t: "Dashboard", href: "../dashboard.html" }, true)}
+  <span class="sep"></span><span class="glabel">Worlds</span>
+  ${wBuilt.map(it => chip(it)).join("")}
+  <button class="more" data-drawer="worlds">+${WORLDS.flatMap(w => w.items).filter(i => !i.href).length} soon</button>
+  <span class="sep"></span><span class="glabel">Stats</span>
+  ${STATS.map(it => chip(it)).join("")}
+  <span class="sep"></span><span class="glabel">Account</span>
+  ${ACCOUNT.filter(i => i.href).map(it => chip(it)).join("")}
+  <button class="more" data-drawer="account">+${aGhostN} soon</button>`;
+const drawers = {
+  worlds: wGhost.map(w => `<span class="glabel">W${w.n}</span>` + w.items.filter(i => !i.href)
+    .map(it => `<span class="gchip">${it.ic ? sp(it.ic[0], it.ic[1]) : ""}${it.t}</span>`).join("")).join(""),
+  account: ACCOUNT.filter(i => !i.href).map(it => `<span class="gchip">${it.ic ? sp(it.ic[0], it.ic[1]) : ""}${it.t}</span>`).join(""),
+};
+document.querySelectorAll("#railB .more").forEach(b => b.onclick = () => {
+  const d = document.getElementById("drawerB");
+  const same = b.classList.contains("on");
+  document.querySelectorAll("#railB .more").forEach(x => x.classList.remove("on"));
+  if (same) { d.classList.remove("open"); return; }
+  b.classList.add("on");
+  d.innerHTML = drawers[b.dataset.drawer];
+  d.classList.add("open");
+});
+
+/* ---------- variant C: world pills ----------
+ * Built worlds get their own pill; unbuilt worlds collapse into one dashed range pill
+ * and graduate out of it as their first page lands. */
+const statsDD = document.querySelector("#navC .dd");
+const addPill = (el) => statsDD.parentNode.insertBefore(el, statsDD);
+const deadWorlds = WORLDS.filter(w => !w.items.some(i => i.href));
+if (deadWorlds.length) {
+  const el = document.createElement("span");
+  el.className = "dd wpill dead";
+  el.innerHTML = `
+    <button class="trig"><span class="wn">W${deadWorlds[0].n}–W${deadWorlds[deadWorlds.length - 1].n}</span><span class="planned-n">${deadWorlds.flatMap(w => w.items).length} soon</span></button>
+    <div class="dd-pop"><div class="wpanel" style="grid-template-columns:repeat(2,minmax(170px,1fr))">
+      ${deadWorlds.map(w => `<div class="wgroup"><h5><b>W${w.n}</b>${w.name}</h5>${w.items.map(row).join("")}</div>`).join("")}
+    </div></div>`;
+  addPill(el);
+}
+WORLDS.filter(w => w.items.some(i => i.href)).forEach(w => {
+  const lead = w.items.find(i => i.href && i.ic);
+  const el = document.createElement("span");
+  el.className = "dd wpill";
+  el.innerHTML = `
+    <button class="trig"><span class="wn">W${w.n}</span>${lead ? sp(lead.ic[0], lead.ic[1]) : ""}</button>
+    <div class="dd-pop" style="min-width:180px"><div class="wname"><b>W${w.n}</b>${w.name}</div>${w.items.map(row).join("")}</div>`;
+  addPill(el);
+});
+
+/* ---------- dropdown plumbing (A + C) ---------- */
+document.querySelectorAll(".dd > button.trig").forEach(b => b.onclick = (e) => {
+  e.stopPropagation();
+  const dd = b.parentNode;
+  const was = dd.classList.contains("open");
+  document.querySelectorAll(".dd.open").forEach(x => x.classList.remove("open"));
+  if (!was) dd.classList.add("open");
+});
+document.addEventListener("click", () => document.querySelectorAll(".dd.open").forEach(x => x.classList.remove("open")));
+
+/* screenshot/demo helper: ?open=a-worlds|a-stats|a-account|b-worlds|b-account|c-w1..c-w6|c-stats|c-account */
+const openQ = new URLSearchParams(location.search).get("open");
+if (openQ) {
+  const [v, which] = openQ.split("-");
+  if (v === "a") { const i = { worlds: 0, stats: 1, account: 2 }[which]; document.querySelectorAll("#hdrA .dd")[i]?.classList.add("open"); }
+  if (v === "b") document.querySelector(`#railB .more[data-drawer="${which}"]`)?.click();
+  if (v === "c") {
+    if (which.startsWith("w")) [...document.querySelectorAll("#navC .wpill")].find(p => p.querySelector(".wn").textContent.includes(which.toUpperCase()))?.classList.add("open");
+    else document.querySelectorAll("#navC .dd:not(.wpill)")[{ stats: 0, account: 1 }[which]]?.classList.add("open");
+  }
+}
+</script>
+</body>
+</html>

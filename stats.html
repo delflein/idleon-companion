@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stats — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align:top; white-space:normal; }
+  tr.expander { cursor:pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom:none; padding-top:0; }
+  tr.subsrc td { border-bottom:none; padding-top:0; padding-bottom:4px; color:var(--ink-2); }
+  .inputs { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-end; }
+  .inputs label { display:block; color:var(--ink-muted); font-size:11.5px; font-weight:650; margin-bottom:3px; }
+  .inputs input { width:150px; }
+  .inputs .why { color:var(--ink-muted); font-size:11px; max-width:230px; }
+  .note { color:var(--ink-2); white-space:normal; max-width:640px; }
+  .expr { color:var(--ink-muted); font-size:10.5px; white-space:normal; font-weight:400; }
+  .where { color:var(--accent); font-size:11.5px; margin-top:1px; font-weight:600; }
+  label.toggle { color:var(--ink-muted); font-size:12px; display:flex; gap:5px; align-items:center; cursor:pointer; }
+  .partrow { color:var(--ink-2); font-size:12px; padding-left:18px; border-left:2px solid var(--grid); margin:1px 0; }
+  .bar { height:8px; background:var(--series-1); border-radius:0 4px 4px 0; display:inline-block; vertical-align:middle; }
+  ul.unknowns { margin:4px 0 0 18px; color:var(--ink-2); font-size:12.5px; }
+  ul.unknowns li { margin-bottom:3px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Tome_0.png" alt="" width="26" height="26">Stats</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <select id="recipeSel"></select>
+  <select id="charSel"></select>
+  <label class="toggle"><input type="checkbox" id="internalsChk"> internals</label>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div id="caveat" class="caveat" style="display:none"></div>
+<section class="panel" id="inputsPanel" style="display:none"></section>
+<div class="cards" id="tiles"></div>
+<section class="panel" id="charPanel" style="display:none"></section>
+<section class="panel" id="addPanel" style="display:none"></section>
+<section class="panel" id="mulPanel" style="display:none"></section>
+<section class="panel" id="unknownPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let DATA = null;          // /api/stats payload
+let SERIES = {};          // metric key -> [{ts,v}]
+let RECIPE = null;        // selected recipe name
+let CHAR = "account";     // "account" | char index
+let INTERNALS = false;    // show ids/expressions/derivations up front (dev mode)
+
+const fmt = (n) => {
+  if (!isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+/* Tiny inline sparkline from the metrics history. Only drawn with >= 2 points; the metrics
+ * table omits unknown terms, so a short series is normal, not a bug. */
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map(p => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h/2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v,i) => `${(i*step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length-1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none" stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+function currentResult() {
+  const st = DATA.stats[RECIPE];
+  if (CHAR !== "account" && st.byChar) {
+    const c = st.byChar.find(x => x.charIdx === Number(CHAR));
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function charName(i) { return DATA.charNames?.[i] ?? ("char " + i); }
+
+function render() {
+  const st = DATA.stats[RECIPE];
+  const r = currentResult();
+  $("meta").textContent = new Date(DATA.ts).toLocaleString();
+
+  /* honesty banner — distinguish genuinely-unknown from merely per-character */
+  const unknownTerms = r.terms.filter(t => t.status === "unknown").length;
+  const perCharTerms = r.terms.filter(t => t.status === "per-char").length;
+  if (r.lowerBound || perCharTerms) {
+    $("caveat").style.display = "";
+    $("caveat").innerHTML = `<b>Lower bound.</b> ` +
+      (unknownTerms ? `${unknownTerms} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher. ` :
+        `Minor inputs remain unknowable (see the notes at the bottom) — the real value can only be higher. `) +
+      (perCharTerms ? `${perCharTerms} sources are per-character — <b>pick a character above</b> to resolve them.` : "");
+  } else $("caveat").style.display = "none";
+
+  /* overrides — every input here is auto-derived now; filling one pins it */
+  $("inputsPanel").style.display = "";
+  $("inputsPanel").innerHTML = `
+    <h2>Overrides <span class="hint">all auto-derived from the save — fill only to pin an exact value; stored until cleared</span></h2>
+    <div class="inputs">
+      <div><label>Tome score</label><input id="inTome" value="${DATA.inputs?.statTomePoints ?? ""}" placeholder="auto: computed floor">
+        <div class="why">Computed from the save as a floor. Enter the exact "&lt;N&gt; PTS" from the Tome page to pin it.</div></div>
+      <div><label>Lab nodes connected</label><input id="inLab" value="${DATA.inputs?.statLabConnected ?? ""}" placeholder="auto: board solver">
+        <div class="why">The board solver proves connections from the save. Filling this wins outright, incl. marking others disconnected.</div></div>
+      <div><label>Active vote</label><input id="inVote" value="${DATA.inputs?.statActiveVote ?? ""}" placeholder="auto: read at sync">
+        <div class="why">Read from server vars at sync. 20 = artifact find, 27 = drop rate.</div></div>
+      <div><button id="saveInputs" class="primary">Save & recompute</button></div>
+    </div>`;
+  $("saveInputs").addEventListener("click", async () => {
+    await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ statTomePoints: $("inTome").value, statLabConnected: $("inLab").value, statActiveVote: $("inVote").value }) });
+    await boot();
+  });
+
+  /* tiles — "points" recipes (e.g. the Tome) are flat sums, not multipliers */
+  const isPoints = st.format === "points";
+  const pre = r.lowerBound ? "≥ " : "";
+  const best = st.byChar ? st.byChar.reduce((a,b) => b.result.value > a.result.value ? b : a) : null;
+  /* internals-only tiles: the caveat banner already states coverage in prose, and the
+   * pool/chain split is the math shape the player-mode grouping deliberately hides */
+  $("tiles").innerHTML = `
+    <div class="tile"><div class="label">${st.label}</div><div class="value">${pre}${fmt(r.value)}${isPoints ? " pts" : "x"}</div>
+      <div class="sub">${CHAR === "account" ? "account view" : "as " + charName(Number(CHAR))}</div></div>
+    ${!INTERNALS || isPoints ? "" : `<div class="tile"><div class="label">Additive pool</div><div class="value">+${fmt(r.additivePoolPct)}%</div>
+      <div class="sub">×${fmt(1 + r.additivePoolPct/100)} bracket</div></div>
+    <div class="tile"><div class="label">Multiplier chain</div><div class="value">×${fmt(r.multiplicative)}</div>
+      <div class="sub">${r.terms.filter(t=>t.kind==="mul" && t.value !== 1).length} live factors</div></div>
+    <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownTerms - perCharTerms}/${r.terms.length}</div>
+      <div class="sub">${perCharTerms ? `+${perCharTerms} per-character` : "terms computed"}</div></div>`}
+    ${best ? `<div class="tile"><div class="label">Best character</div><div class="value">${fmt(best.result.value)}x</div>
+      <div class="sub">${charName(best.charIdx)}</div></div>` : ""}`;
+
+  /* per-character comparison */
+  if (st.byChar) {
+    const max = Math.max(...st.byChar.map(c => c.result.value));
+    $("charPanel").style.display = "";
+    $("charPanel").innerHTML = `
+      <h2>Per character <span class="hint">as-if-active — talents, equipped cards, card set, chips</span></h2>
+      <div class="scroll"><table>
+      ${st.byChar.map(c => `<tr class="${CHAR !== "account" && c.charIdx === Number(CHAR) ? "pick" : ""}">
+        <td style="width:130px"><b>${charName(c.charIdx)}</b></td>
+        <td style="width:90px;text-align:right">${fmt(c.result.value)}x</td>
+        <td><span class="bar" style="width:${Math.max(2, c.result.value/max*260)}px"></span></td>
+        <td class="expr">${c.result.terms.filter(t=>t.status!=="unknown").length}/${c.result.terms.length} terms</td>
+      </tr>`).join("")}
+      </table></div>`;
+  } else { $("charPanel").style.display = "none"; }
+
+  /* term tables — player-facing first: human label, WHERE to find it in-game, and what
+   * drives it. The term id, client expression and raw derivation live behind the row
+   * expander / the global "internals" toggle. */
+  const metricKey = (t) => `stat.${RECIPE}.${t.id}`;
+  const disp = DATA.stats[RECIPE].display || {};
+  const row = (t, fmtV, opts = {}) => {
+    const d = disp[t.id] || {};
+    const label = d.label || t.key;
+    /* parts carrying a `where` are player-facing SUB-SOURCES (different screens to push) —
+     * shown inline; the rest stay in the expander with the internals. */
+    const subSources = (t.parts || []).filter(p => p.where);
+    const techParts = (t.parts || []).filter(p => !p.where);
+    return `<tr class="${t.status === "unknown" ? "dim" : ""} expander" data-term="${t.id}">
+      <td style="max-width:340px;white-space:normal"><b>${label}</b> <span class="expr">▸</span>
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${fmtV(t)}</td>
+      <td>${(opts.flagState ? opts.flagState(t) + " " : "")}${chip(t.status)}</td>
+      <td>${opts.spark === false ? "" : spark(metricKey(t))}</td>
+      <td class="note">${INTERNALS ? (t.note || "") : (d.how || t.note || "")}</td>
+    </tr>
+    ${subSources.map(p => `<tr class="subsrc ${t.status === "unknown" ? "dim" : ""}">
+      <td style="white-space:normal"><div class="partrow">↳ <b>${p.label}</b> <span class="where" style="display:inline">· ${p.where}</span></div></td>
+      <td style="text-align:right">${p.valueText ?? fmt(p.value)}</td>
+      <td></td><td></td>
+      <td class="note" style="font-size:12px">${p.note || ""}</td>
+    </tr>`).join("")}
+    <tr class="parts" data-parts="${t.id}" style="display:none"><td colspan="5">
+      ${techParts.map(p => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> <span class="expr">${p.note || ""}</span></div>`).join("")}
+      <div class="partrow internals"><span class="expr">id <b>${t.id}</b> · ${t.key}${t.note ? " · " + t.note : ""}</span></div>
+    </td></tr>`;
+  };
+  /* Grouped by IMPROVABILITY, not by math shape: sources you can keep pushing vs owned-or-not
+   * flags and weekly states (no growth to track). Math shape stays visible via the value
+   * prefix: +% sources share one additive pool, × sources multiply. In internals mode the
+   * classic additive/multiplicative split returns. */
+  /* One comparable axis for everything: an additive source's EFFECTIVE MULTIPLIER is what
+   * the total would divide by if you removed it — (100+pool)/(100+pool−v). Additive sources
+   * dilute each other, so these don't compose independently; the raw +% stays as the sub-line.
+   * "post" flat adds (+2/+0.3) are measured against the pool bracket they add onto. */
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add" ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (t.id === "bunP" ? (t.value || 1) : (bracket + (t.value || 0)) / bracket);
+  const rawVal = (t) => t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : (t.id === "bunP" ? "×" : "+") + fmt(t.value);
+  const fmtVal = (t) => {
+    if (isPoints || INTERNALS) return rawVal(t);
+    const eq = eqMult(t);
+    if (t.kind === "mul") return "×" + fmt(eq);
+    return `×${eq >= 1.1 ? eq.toFixed(2) : eq.toFixed(3)}<div class="expr">${rawVal(t)}${t.kind === "add" ? " of pool" : " flat"}</div>`;
+  };
+  const isFlag = (t) => (disp[t.id] || {}).flag === true;
+  const flagActive = (t) => t.kind === "add" ? t.value > 0 : t.kind === "mul" ? t.value !== 1 : !!t.value && t.value !== 1;
+  const bySection = INTERNALS
+    ? [["Additive pool", r.terms.filter(t => t.kind === "add"), true],
+       ["Multiplicative chain + structural steps", r.terms.filter(t => t.kind !== "add"), true]]
+    : [["Keep improving", r.terms.filter(t => !isFlag(t)), true],
+       ["Flags & one-time unlocks", r.terms.filter(isFlag), false]];
+  const flagChip = (t) => flagActive(t)
+    ? `<span class="chip live">✓ active</span>` : `<span class="chip dead">✗ missing</span>`;
+  const panels = ["addPanel", "mulPanel"];
+  bySection.forEach(([title, terms, withHistory], i) => {
+    const el = $(panels[i]);
+    if (!terms.length) { el.style.display = "none"; return; }
+    el.style.display = "";
+    el.innerHTML = `
+      <h2>${isPoints && !INTERNALS ? "Point sources" : title}
+        <span class="hint">${INTERNALS ? "" : withHistory
+          ? (isPoints ? "flat sum" : "×value = what the total would lose without this source (raw +% underneath)")
+          : "owned-or-not bonuses and weekly states — nothing to track over time"}</span></h2>
+      <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Value</th><th>${withHistory ? "" : "State"}</th><th>${withHistory ? "History" : ""}</th><th>${INTERNALS ? "Derivation" : "How it works"}</th></tr>
+      ${[...terms].sort((a, b) => eqMult(b) - eqMult(a)).map(t =>
+        row(t, fmtVal, withHistory ? {} : { spark: false, flagState: flagChip })).join("")}
+      </table></div>`;
+  });
+
+  /* the honesty roadmap */
+  if (r.unknown.length) {
+    $("unknownPanel").style.display = "";
+    $("unknownPanel").innerHTML = `
+      <h2>Not derivable yet <span class="hint">${r.unknown.length} reasons — each is a concrete piece of N.js still to read, or data the save cannot hold</span></h2>
+      <ul class="unknowns">${r.unknown.map(u => `<li>${u}</li>`).join("")}</ul>`;
+  } else $("unknownPanel").style.display = "none";
+
+  /* expanders */
+  document.querySelectorAll("tr.expander").forEach(tr => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const st = DATA.stats[RECIPE];
+  const keys = [`stat.${RECIPE}`, ...st.collapsed.terms.map(t => `stat.${RECIPE}.${t.id}`)];
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+function fillSelectors() {
+  $("recipeSel").innerHTML = Object.values(DATA.stats)
+    .map(s => `<option value="${s.name}" ${s.name === RECIPE ? "selected" : ""}>${s.label}</option>`).join("");
+  const st = DATA.stats[RECIPE];
+  $("charSel").innerHTML = `<option value="account">Account view</option>` +
+    (st.byChar ? st.byChar.map(c => `<option value="${c.charIdx}" ${String(c.charIdx) === CHAR ? "selected" : ""}>${charName(c.charIdx)}</option>`).join("") : "");
+  $("charSel").style.display = st.byChar ? "" : "none";
+}
+
+async function boot() {
+  try {
+    const res = await fetch("/api/stats");
+    const j = await res.json();
+    if (!j.ok || !j.stats) { $("err").textContent = "No snapshot with a stored raw save yet — Sync first."; return; }
+    DATA = j;
+    const q = new URLSearchParams(location.search);
+    if (q.get("recipe")) RECIPE = q.get("recipe");
+    if (q.get("char")) CHAR = q.get("char");
+    if (q.get("internals")) { INTERNALS = true; $("internalsChk").checked = true; }
+    RECIPE = RECIPE && DATA.stats[RECIPE] ? RECIPE : Object.keys(DATA.stats)[0];
+    await loadHistory();
+    fillSelectors();
+    render();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+$("recipeSel").addEventListener("change", async (e) => { RECIPE = e.target.value; CHAR = "account"; await loadHistory(); fillSelectors(); render(); });
+$("charSel").addEventListener("change", (e) => { CHAR = e.target.value; render(); });
+$("internalsChk").addEventListener("change", (e) => { INTERNALS = e.target.checked; render(); });
+boot();
+</script>
+</body>
+</html>

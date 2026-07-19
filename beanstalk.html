@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Beanstalk — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 420px; font-size: 12px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  tr.dim td { opacity: .6; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/beanstalk.png" alt="" width="26" height="26">Beanstalk</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="foodsPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, GLOSS = null;
+let BEAN = null;   // SNAP.entities.w6.beanstalk shortcut
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* beanstalkBonusTerm(amount, gfoodBonusMulti, rank) — VERBATIM from
+ * gamedata-w6-beanstalk.mjs §3 (N.js byte offset ~4972220-4972550):
+ *   Amount * GfoodBonusMULTI * .05 * getLOG(1+1000*10^rank) * (1 + getLOG(1+1000*10^rank)/2.14)
+ * `getLOG(x) = ln(max(x,1))/ln(10)`. GfoodBonusMULTI is a 20+-system multiplier (armor sets,
+ * stamps, achievements, talents, ...) NOT modeled in this repo yet — taken as 1 (its neutral
+ * element), so the number below is an HONEST LOWER BOUND, never a guess at the real multiplier. */
+function beanstalkBonusLowerBound(amount, rank) {
+  if (!rank) return 0;
+  const x = 1 + 1000 * Math.pow(10, rank);
+  const l = Math.log(Math.max(x, 1)) / Math.LN10;
+  return amount * 1 * 0.05 * l * (1 + l / 2.14);
+}
+
+const BONUS_TIP = "Computed from the verbatim N.js beanstalk formula with GfoodBonusMULTI (armor sets, stamps, achievements, talents, and ~15 more sources) taken as ×1 — its neutral element. The real in-game bonus is higher. This is a lower bound, not a guess.";
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const b = BEAN;
+  const planted = b.foods.filter((f) => f.rank > 0).length;
+  $("tiles").innerHTML = `
+    <div class="tile"><div class="label">Beanstalk</div><div class="value">${b.unlocked ? "unlocked" : "locked"}</div><div class="sub">Jade Emporium unlock #1</div></div>
+    <div class="tile"><div class="label">Supersizing</div><div class="value">${b.supersizeUnlocked ? "unlocked" : "locked"}</div><div class="sub">Jade Emporium unlock #2 — allows 100,000-stack deposits</div></div>
+    <div class="tile"><div class="label">Foods planted</div><div class="value">${planted}<span class="of">/${b.foods.length}</span></div><div class="sub">permanent bonus without needing the food equipped</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * 17-food table — rank, deposited vs next-tier stack (static numbers, no timer), effect text,
+ * current bonus (lower bound, see tooltip).
+ * ============================================================================================ */
+function foodRowHtml(f) {
+  const gloss = GLOSS?.goldenFoods?.find((x) => x.index === f.index);
+  const effectText = gloss?.desc ? gloss.desc.replace("[", fmt(f.amount)) : f.effect ?? "—";
+  const rankLabel = f.rank > 0 ? `Rank ${f.rank}` : "not planted";
+  const nextText = f.nextTierStack != null ? `stack of ${fmt(f.nextTierStack)}` : "max rank reached";
+  const bonus = beanstalkBonusLowerBound(f.amount, f.rank);
+  return `<tr class="${f.rank > 0 ? "" : "dim"}">
+    <td><b>${f.name}</b></td>
+    <td>${f.rank > 0 ? `<span class="chip live">${rankLabel}</span>` : `<span class="chip dead">${rankLabel}</span>`}</td>
+    <td style="text-align:right">${f.depositedStack ? fmt(f.depositedStack) : "—"}</td>
+    <td style="text-align:right">${nextText}</td>
+    <td class="note">${effectText}</td>
+    <td style="text-align:right">${f.rank > 0 ? "≥ " + fmt(bonus) : "—"}</td>
+  </tr>`;
+}
+
+function renderFoods() {
+  const b = BEAN;
+  $("foodsPanel").style.display = "";
+  $("foodsPanel").innerHTML = `
+    <h2>${UI.sprite("beanstalk", 20, "etc")} Golden Foods <span class="hint">17 golden foods can be permanently planted on the beanstalk instead of equipped — deposit a whole stack to raise a food's rank.
+      <span class="tip" title="Deposit sizes are fixed stacks (10,000 for rank 1, 100,000 for rank 2 once Supersizing is unlocked, 1,000,000 for rank 3) — not incremental progress. No timers: this table shows current state and what the next stack size is, not how long it'll take.">ⓘ</span></span></h2>
+    <div class="lowerbound">${BONUS_TIP}</div>
+    <div class="scroll"><table><tr><th>Food</th><th>Status</th><th style="text-align:right">Deposited stack</th><th>Next tier</th><th>Effect</th><th style="text-align:right">Current bonus</th></tr>${b.foods.map(foodRowHtml).join("")}</table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w6) {
+      $("err").innerHTML = `No <code>w6</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    BEAN = SNAP.entities.w6.beanstalk;
+
+    const glossRes = await fetch("/api/w6");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderFoods();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

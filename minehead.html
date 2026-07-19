@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Minehead &amp; Glimbo — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/MineHead0.png" alt="" width="26" height="26">Minehead &amp; Glimbo</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="shopPanel" style="display:none"></section>
+<section class="panel" id="glimboPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, GLOSS = null;
+let M = null;   // SNAP.entities.w7.minehead shortcut
+let SHOWALLSHOP = false, SHOWALLGLIMBO = false;
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("MineHead0", 28, "data")}<div class="label">Button presses</div><div class="value">${fmt(M.buttonPresses)}</div><div class="sub">buckets of 5 feed the Button Bonuses track</div></div>
+    <div class="tile"><div class="label">Depth Charge shop bought</div><div class="value">${M.shopBought}<span class="of">/${M.shopLevels.length}</span></div><div class="sub">at least 1 level in</div></div>
+    <div class="tile"><div class="label">Glimbo total trades</div><div class="value">${fmt(M.glimboTotalTrades)}</div><div class="sub">across ${M.glimboTrades.length} tradeable grid-node unlocks</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Depth Charge shop table — 30 rows, capped + show-more.
+ * ============================================================================================ */
+function shopRowHtml(r, desc) {
+  return `<tr>
+    <td><b>${r.name}</b>${desc ? `<div class="where">${desc}</div>` : ""}</td>
+    <td style="text-align:right">${r.level}<span class="of">/${r.maxLv >= 9999 ? "∞" : r.maxLv}</span></td>
+  </tr>`;
+}
+function renderShop() {
+  const descOf = Object.fromEntries((GLOSS?.mineheadShop ?? []).map((s) => [s.id, s.desc]));
+  const bought = M.shopLevels.filter((r) => r.level > 0).sort((a, b) => b.level - a.level);
+  const untouched = M.shopLevels.filter((r) => r.level === 0);
+  const ordered = bought.concat(untouched);
+  const rows = SHOWALLSHOP ? ordered : ordered.slice(0, 10);
+  $("shopPanel").style.display = "";
+  $("shopPanel").innerHTML = `
+    <h2>${UI.sprite("MineHead0", 20, "data")} Depth Charge shop <span class="hint">Minehead's Minesweeper-style minigame — 30 upgrades, no per-upgrade dispatcher formula was found in N.js (the effect wiring lives in the minigame's own scene code), so levels are shown as-is.</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Upgrade</th><th style="text-align:right">Level</th></tr>
+      ${rows.map((r) => shopRowHtml(r, descOf[r.id])).join("")}
+    </table></div>
+    ${ordered.length > 10 ? `<button class="showmore" id="shopShowMore">${SHOWALLSHOP ? "show fewer" : `show ${ordered.length - 10} more`}</button>` : ""}
+  `;
+  const more = $("shopShowMore");
+  if (more) more.onclick = () => { SHOWALLSHOP = !SHOWALLSHOP; renderShop(); };
+}
+
+/* ============================================================================================
+ * Glimbo trades — the SAME 22-row table as the Research Grid's node-unlock requirements
+ * (a node needs this trade completed before it can be leveled at all).
+ * ============================================================================================ */
+function glimboRowHtml(t, costGrowth) {
+  return `<tr>
+    <td><b>${t.item}</b><div class="where">unlocks Research Grid node #${t.gridNode}</div></td>
+    <td style="text-align:right">${fmt(t.trades)}</td>
+    <td style="text-align:right">${costGrowth != null ? "×" + costGrowth + "/trade" : "—"}</td>
+  </tr>`;
+}
+function renderGlimbo() {
+  const growthOf = Object.fromEntries((GLOSS?.glimboCostGrowth ?? []).map((g) => [g.idx, g.costGrowth]));
+  const withGrowth = M.glimboTrades.map((t, i) => ({ ...t, costGrowth: growthOf[i] }));
+  const list = withGrowth.sort((a, b) => b.trades - a.trades);
+  const rows = SHOWALLGLIMBO ? list : list.slice(0, 10);
+  $("glimboPanel").style.display = "";
+  $("glimboPanel").innerHTML = `
+    <h2 class="subhead">Glimbo trades <span class="hint">Trading with Glimbo is the ONLY way to unlock these 22 specific Research Grid nodes — points alone won't do it. Cost grows geometrically per trade (Companions(57) and the weekly Event Shop both discount it).</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Trade item</th><th style="text-align:right">Trades made</th><th style="text-align:right">Cost growth</th></tr>
+      ${rows.map((t) => glimboRowHtml(t, t.costGrowth)).join("")}
+    </table></div>
+    ${list.length > 10 ? `<button class="showmore" id="glimboShowMore">${SHOWALLGLIMBO ? "show fewer" : `show ${list.length - 10} more`}</button>` : ""}
+  `;
+  const more = $("glimboShowMore");
+  if (more) more.onclick = () => { SHOWALLGLIMBO = !SHOWALLGLIMBO; renderGlimbo(); };
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w7) {
+      $("err").innerHTML = `No <code>w7</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    M = SNAP.entities.w7.minehead;
+
+    const glossRes = await fetch("/api/w7");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderShop();
+    renderGlimbo();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

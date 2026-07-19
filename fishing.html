@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fishing (Poppy) — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/afk_targets/Poppy.png" alt="" width="26" height="26">Fishing (Poppy)</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="fishingPanel" style="display:none"></section>
+<div id="rmod_fishRate"></div>
+<div id="rmod_shinyRate"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let DATA = null;    // /api/stats payload
+let GLOSS = null;   // /api/w2 static glossary
+let SERIES = {};    // metric key -> [{ts,v}]
+let W2 = null;      // SNAP.entities.w2 shortcut
+
+/* ---------- generic helpers (same as w2.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const niceItem = (s) => String(s ?? "")
+  .replace(/_/g, " ")
+  .replace(/([a-z])([A-Z])/g, "$1 $2")
+  .replace(/([A-Za-z])(\d)/g, "$1 $2")
+  .trim();
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip (Fishing slice of w2.html's renderTiles).
+ * ============================================================================================ */
+function renderTiles() {
+  const fish = W2.fishing;
+
+  const tiles = [
+    ["Poppy|afk_targets", "Bluefin fish / min", fmt(fish.fishPerMinute), `shiny rate ${fmt(fish.shinyRate)}/tick (lower bound)`],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Fishing (Poppy + Tar Pit + Mega Fish/Shiny/Reset Spiral) + fishRate/shinyRate embeds.
+ * ============================================================================================ */
+function upgRowHtml(u, g) {
+  return `<tr>
+    <td><b>${niceItem(u.name)}</b>${g ? `<div class="note">${g.desc}${g.bonus ? " — " + g.bonus : ""}</div>` : ""}</td>
+    <td style="text-align:right">Lv ${u.level}</td>
+  </tr>`;
+}
+
+function renderFishing() {
+  const fish = W2.fishing;
+  const poppyGloss = new Map((GLOSS?.poppyEffects || []).map((u) => [u.idx, u]));
+  const tarGloss = new Map((GLOSS?.tarPitEffects || []).map((u) => [u.idx, u]));
+  const megaGloss = new Map((GLOSS?.megaFishMilestones || []).map((m) => [m.idx, m]));
+  const spiralGloss = new Map((GLOSS?.resetSpiralEffects || []).map((r) => [r.idx, r]));
+
+  const megaRows = Array.from({ length: 12 }, (_, i) => {
+    const g = megaGloss.get(i);
+    const unlocked = i < fish.megaFishUnlocked;
+    return `<tr class="${unlocked ? "" : "dim"}">
+      <td><span class="chip ${unlocked ? "live" : "dead"}">${unlocked ? "unlocked" : "locked"}</span></td>
+      <td class="note">${g ? g.desc : ""}</td>
+    </tr>`;
+  }).join("");
+
+  const shinyRows = fish.shinyTiers.map((t) => `<div class="lever">
+      <span class="lname">Shiny tier ${t.i + 1}</span>
+      <div class="lbar"><div class="lfill" style="width:${Math.min(100, t.level)}%"></div></div>
+      <span class="lval">Lv ${t.level}</span>
+    </div>`).join("");
+
+  const spiralRows = fish.resetSpiral.map((r) => {
+    const g = spiralGloss.get(r.i);
+    return `<div class="lever">
+      <span class="lname">${g ? g.desc : "Reset Spiral " + r.i}</span>
+      <div class="lbar"><div class="lfill" style="width:${Math.min(100, r.level * 4)}%"></div></div>
+      <span class="lval">Lv ${r.level}</span>
+    </div>`;
+  }).join("");
+
+  $("fishingPanel").style.display = "";
+  $("fishingPanel").innerHTML = `
+    <h2>Fishing (Poppy) <span class="hint">Poppy's fishing-town upgrades, Tar Pit, and the rate they add up to — planning numbers, not a live counter.</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("Poppy", 28, "afk_targets")}<div class="label">Bluefin / min</div><div class="value">${fmt(fish.fishPerMinute)}</div><div class="sub"><a href="#mod_fishRate">full breakdown ↓</a></div></div>
+      <div class="tile"><div class="label">Shiny rate</div><div class="value">${fmt(fish.shinyRate)}<span class="of">/tick</span></div><div class="sub"><a href="#mod_shinyRate">full breakdown ↓</a></div></div>
+      <div class="tile"><div class="label">Mega Fish milestones</div><div class="value">${fish.megaFishUnlocked}<span class="of">/12</span></div><div class="sub">permanent multipliers, see below</div></div>
+      <div class="tile"><div class="label">Currency banked</div><div class="value">${fmt(fish.fishCurrency)}</div><div class="sub">${fmt(fish.tarCurrency)} tar-pit currency</div></div>
+    </div>
+    <div class="grid2">
+      <section class="panel" style="margin:0">
+        <h2 style="font-size:13px">Poppy upgrades</h2>
+        <div class="scroll"><table><tr><th>Upgrade</th><th style="text-align:right">Level</th></tr>
+          ${fish.poppy.map((u) => upgRowHtml(u, poppyGloss.get(u.i))).join("")}
+        </table></div>
+      </section>
+      <section class="panel" style="margin:0">
+        <h2 style="font-size:13px">Tar Pit upgrades</h2>
+        <div class="scroll"><table><tr><th>Upgrade</th><th style="text-align:right">Level</th></tr>
+          ${fish.tarPit.map((u) => upgRowHtml(u, tarGloss.get(u.i))).join("")}
+        </table></div>
+      </section>
+    </div>
+    <details class="fold" style="margin-top:10px">
+      <summary>Mega Fish milestones, Shiny tiers &amp; Reset Spiral</summary>
+      <p class="note">Mega Fish milestones unlock permanently as your fish-currency counter climbs; Reset Spiral levels are earned by resetting Poppy's upgrades ("Fisheroo Reset") for permanent multipliers instead.</p>
+      <div class="scroll"><table><tr><th>Mega Fish milestone</th><th>Effect</th></tr>${megaRows}</table></div>
+      <h2 style="font-size:13px;margin-top:10px">Shiny multiplier tiers</h2>
+      <div class="levers">${shinyRows}</div>
+      <h2 style="font-size:13px;margin-top:10px">Reset Spiral</h2>
+      <div class="levers">${spiralRows}</div>
+    </details>
+  `;
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for fishRate / shinyRate — same pattern as w1-w5.html's
+ * RECIPE_MODULES.
+ * ============================================================================================ */
+let CHARSEL = {};
+let SHOWALL = {};
+
+const RECIPE_MODULES = [
+  { name: "fishRate", title: "Bluefin Fish / min", icon: ["Poppy", "afk_targets"],
+    blurb: "Poppy upgrades, Tar Pit, resets, and Mega Fish multiplying into a fish-per-minute rate." },
+  { name: "shinyRate", title: "Shiny Fishing Rate", icon: ["Poppy", "afk_targets"],
+    blurb: "Shiny Lure level, Mega Fish 9, Reset Spiral, and the shiny catch interval." },
+];
+
+const chipTerm = chip;
+
+function currentResult(cfg, st) {
+  const sel = CHARSEL[cfg.name] || "account";
+  if (sel !== "account" && st.byChar) {
+    const c = st.byChar.find((x) => String(x.charIdx) === sel);
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="${parts.length ? "expander" : ""}" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:320px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${rawVal}</td>
+      <td>${chipTerm(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function lockedRow(t, disp) {
+  const d = disp[t.id] || {};
+  return `<tr class="dim">
+    <td style="max-width:320px"><b>${d.label || t.key}</b>${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+    <td style="text-align:right">—</td>
+    <td><span class="chip dead">locked/inactive</span></td>
+    <td></td>
+    <td class="note">${d.how || t.note || "Not contributing right now."}</td>
+  </tr>`;
+}
+
+function liveModuleHTML(cfg, st) {
+  if (!(cfg.name in CHARSEL)) CHARSEL[cfg.name] = "account";
+  const r = currentResult(cfg, st);
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked } = bucketTerms(r);
+  const unknownTerms = r.terms.filter((t) => t.status === "unknown");
+  const unknownCount = unknownTerms.length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const caveat = r.lowerBound ? `<div class="lowerbound">
+    <b>Lower bound.</b> ${unknownCount} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher.
+  </div>` : "";
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "×");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span></h2>
+    ${caveat}
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount}<span class="of">/${r.terms.length}</span></div><div class="sub">sources computed</div></div>
+      ${locked.length ? `<div class="tile"><div class="label">Locked / inactive</div><div class="value">${locked.length}</div><div class="sub">not contributing right now</div></div>` : ""}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${locked.length ? `<details class="fold" style="margin-top:6px"><summary>${locked.length} locked/inactive source${locked.length > 1 ? "s" : ""}</summary>
+      <div class="scroll"><table>${locked.map((t) => lockedRow(t, disp)).join("")}</table></div>
+    </details>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet.</p>
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander[data-mod]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w2) {
+      $("err").innerHTML = `No <code>w2</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W2 = SNAP.entities.w2;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w2")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdowns below.";
+
+    renderTiles();
+    renderFishing();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

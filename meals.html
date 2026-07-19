@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meals — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  select.inlinesel { font-size: 12px; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .tile.pending { opacity: .5; }
+  section.panel.pending { opacity: .6; }
+  section.panel.pending h2 { color: var(--ink-muted); }
+  .pill-pending { font-size: 10.5px; font-weight: 800; letter-spacing: .04em; color: var(--warning); border: 1px solid rgba(250,178,25,.5); border-radius: 999px; padding: 1px 8px; margin-left: 8px; vertical-align: 1px; }
+  /* meals.html-specific (Meal Maxing goal selector) */
+  .goalbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .goalbar select.inlinesel { min-width: 150px; }
+  .keybadge { font-size: 10px; font-weight: 700; color: var(--ink-muted); background: var(--surface-2); border-radius: 5px; padding: 1px 6px; margin-left: 6px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/afk_targets/Cooking.png" alt="" width="26" height="26">Meals</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="mealPanel" style="display:none"></section>
+<div id="rmod_mealBonuses"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let DATA = null;    // /api/stats payload
+let GLOSS = null;   // /api/w4 static glossary
+let SERIES = {};    // metric key -> [{ts,v}]
+let W4 = null;      // SNAP.entities.w4 shortcut
+
+/* ---------- module state ---------- */
+let MEAL_GOAL = localStorage.getItem("w4MealGoal") || "cheap";   // "cheap" | "jump" | "effect"
+let MEAL_EFFECT_KEY = localStorage.getItem("w4MealEffectKey") || "";
+let MEAL_SHOWALL = false;
+let CHARSEL = {};   // recipe name -> "account" | charIdx (string)
+let SHOWALL = {};   // recipe name -> bool, "show more" toggle (recipe modules)
+
+/* ---------- generic helpers (same as w1.html/w2.html/w3.html, EXTENDED for W4) ---------- */
+/* W4's own numbers routinely blow past where "/1e9 -> B" stays readable — a pushed account's
+ * kitchen cook-SPEED chain (base 10 × ~24 multiplicative arms, several of them per-ladle
+ * exponentials) lands in the 1e28-1e32 range, and late-meal level-up costs (documented UPPER
+ * bounds, see bonuses/cooking.mjs mealCostToNext) reach past 1e150. Printing those through the
+ * plain w1-w3.html fmt() would emit a 20+ digit number, which is its own kind of number-soup —
+ * so this page's fmt() falls back to compact scientific notation once a value crosses 1e15. */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+function charName(i) { return SNAP?.charNames?.[i] ?? ("char " + i); }
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip — meals-related tiles only (this page's slice of w4.html's renderTiles()).
+ * ============================================================================================ */
+function renderTiles() {
+  const m = W4.meals, mc = W4.mealCap;
+  const started = m.filter((x) => x.level > 0).length;
+
+  const tiles = [
+    ["Cooking|afk_targets", "Meals started", `${started}<span class="of">/${m.length}</span>`, "level 1+"],
+    ["Ribbon0|data", "Meal level cap", (mc.lowerBound ? "≥ " : "") + fmt(mc.value), "some raise-sources unmodeled"],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Meal Maxing (flagship): next-best-meal ranking under a goal selector.
+ * ============================================================================================ */
+function mealEffectOptions() {
+  const seen = new Map();
+  for (const m of W4.meals) if (!seen.has(m.key)) seen.set(m.key, m.effect);
+  return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+function rankedMeals() {
+  const pool = W4.meals.filter((m) => !m.capped);
+  if (MEAL_GOAL === "cheap") {
+    return pool.filter((m) => m.costToNext != null)
+      .sort((a, b) => a.costToNext - b.costToNext);
+  }
+  if (MEAL_GOAL === "jump") {
+    // Bonus is linear in level (bonus = level * coeff * arms), so the marginal gain from the
+    // NEXT level-up, as a % of the meal's current bonus, is exactly 100/level for a started
+    // meal — derivable straight from the entity's level+bonus fields, no gamedata needed.
+    // A never-started meal (level 0) has no "current bonus" to compare against; its first level
+    // is definitionally the biggest relative jump possible, so it sorts first (marked, not %).
+    return pool.filter((m) => m.costToNext != null)
+      .map((m) => ({ ...m, pctJump: m.level > 0 ? 100 / m.level : Infinity }))
+      .sort((a, b) => b.pctJump - a.pctJump);
+  }
+  // "effect" — filter to one MealBonusesS key, cheapest lever for that effect first.
+  const filtered = MEAL_EFFECT_KEY ? pool.filter((m) => m.key === MEAL_EFFECT_KEY) : pool;
+  return filtered.filter((m) => m.costToNext != null).sort((a, b) => a.costToNext - b.costToNext);
+}
+
+function mealGoalBarHtml() {
+  const opts = mealEffectOptions();
+  return `<div class="goalbar">
+    <select class="inlinesel" id="mealGoalSel">
+      <option value="cheap" ${MEAL_GOAL === "cheap" ? "selected" : ""}>Cheapest next level</option>
+      <option value="jump" ${MEAL_GOAL === "jump" ? "selected" : ""}>Biggest % jump</option>
+      <option value="effect" ${MEAL_GOAL === "effect" ? "selected" : ""}>By effect type</option>
+    </select>
+    ${MEAL_GOAL === "effect" ? `<select class="inlinesel" id="mealEffectSel">
+      <option value="">All effects</option>
+      ${opts.map(([key, effect]) => `<option value="${key}" ${key === MEAL_EFFECT_KEY ? "selected" : ""}>${effect}</option>`).join("")}
+    </select>` : ""}
+    <span class="note">${MEAL_GOAL === "cheap" ? "lowest spice cost to the next level first"
+      : MEAL_GOAL === "jump" ? "meals where the next level moves their own bonus the most, in %"
+      : "meals feeding one specific bonus, cheapest first"}</span>
+  </div>`;
+}
+
+function mealRowHtml(m) {
+  const jump = MEAL_GOAL === "jump"
+    ? `<td style="text-align:right">${m.level === 0 ? '<span class="chip user">not started</span>' : "+" + fmt(m.pctJump) + "%"}</td>`
+    : "";
+  return `<tr>
+    <td><b>${m.name}</b><span class="keybadge">${m.key}</span><div class="note">${m.effect}</div></td>
+    <td>Lv ${fmt(m.level)}</td>
+    <td style="text-align:right">${fmt(m.bonus)}</td>
+    <td style="text-align:right">${m.ribbonRank}<span class="of">/25</span></td>
+    ${jump}
+    <td style="text-align:right">${m.costToNext == null ? '<span class="note">incalculable (overflow)</span>' : "≤ " + fmt(m.costToNext)}</td>
+  </tr>`;
+}
+
+function renderMealMaxing() {
+  const mc = W4.mealCap;
+  const ranked = rankedMeals();
+  const shown = MEAL_SHOWALL ? ranked : ranked.slice(0, 12);
+  const startedCount = W4.meals.filter((m) => m.level > 0).length;
+  const bestMeal = W4.meals.slice().sort((a, b) => b.level - a.level)[0];
+
+  $("mealPanel").style.display = "";
+  $("mealPanel").innerHTML = `
+    <h2>${UI.sprite("Cooking", 20, "afk_targets")} Meal Maxing <span class="hint">74 dinner-table meals, each leveled independently — what's the most efficient next level to buy right now?
+      <span class="tip" title="Every meal's bonus = level × its own coefficient × a per-meal Cooking Mastery arm × one account-wide global multiplier (see the breakdown below) × a per-meal Ribbon rank arm. Leveling ANY single meal only moves that meal's own line in the MealBonusesS table — there is no single 'meal power' scalar.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("Ribbon0", 28, "data")}<div class="label">Level cap</div><div class="value">${(mc.lowerBound ? "≥ " : "") + fmt(mc.value)}</div>
+        <div class="sub" title="Causticolumn artifact, 2× Jade Emporium (+10 each), a lore-boss defeat (+30), and Grimoire upgrade #26 (capped +20) can all raise this further — not every source is derivable from the save yet.">5 possible raise-sources <span class="tip" title="Base 30, +Causticolumn artifact, +10/+10 Jade Emporium, +30 lore boss, +≤20 Grimoire #26.">ⓘ</span></div></div>
+      <div class="tile">${UI.sprite("Cooking", 28, "afk_targets")}<div class="label">Global multiplier</div><div class="value">${(W4.mealGlobalMultiLowerBound ? "≥ " : "") + "×" + fmt(W4.mealGlobalMulti)}</div><div class="sub"><a href="#mod_mealBonuses">full breakdown ↓</a></div></div>
+      <div class="tile"><div class="label">Meals started</div><div class="value">${startedCount}<span class="of">/${W4.meals.length}</span></div><div class="sub">at least level 1</div></div>
+      <div class="tile"><div class="label">Highest level</div><div class="value">${bestMeal ? fmt(bestMeal.level) : "—"}</div><div class="sub">${bestMeal ? bestMeal.name : "—"}</div></div>
+    </div>
+    <div class="caveat">Cost-to-next is an UPPER bound (Companion/Achievement/Equinox-cloud discount sources aren't derivable from the save yet — the real cost to level a meal may be lower than shown). Ribbon rank 4+ bonus is also a documented lower bound (Emperor Set / Dreamstuff cloud addends unmodeled) — shown bonus can undercount slightly for heavily-ribboned meals.</div>
+    ${mealGoalBarHtml()}
+    <div class="scroll"><table>
+      <tr><th>Meal</th><th>Level</th><th style="text-align:right">Current bonus</th><th>Ribbon</th>${MEAL_GOAL === "jump" ? "<th style=\"text-align:right\">Next-level jump</th>" : ""}<th style="text-align:right">Cost to next level</th></tr>
+      ${shown.map(mealRowHtml).join("")}
+    </table></div>
+    ${ranked.length > 12 ? `<button class="showmore" id="mealShowMore">${MEAL_SHOWALL ? "show fewer" : `show ${ranked.length - 12} more`}</button>` : ""}
+    ${ranked.length === 0 ? '<p class="note">No meals match this filter — every meal either has no cost data or is out of room to level.</p>' : ""}
+  `;
+  const more = $("mealShowMore");
+  if (more) more.onclick = () => { MEAL_SHOWALL = !MEAL_SHOWALL; renderMealMaxing(); };
+  const goalSel = $("mealGoalSel");
+  if (goalSel) goalSel.onchange = (e) => { MEAL_GOAL = e.target.value; localStorage.setItem("w4MealGoal", MEAL_GOAL); MEAL_SHOWALL = false; renderMealMaxing(); };
+  const effectSel = $("mealEffectSel");
+  if (effectSel) effectSel.onchange = (e) => { MEAL_EFFECT_KEY = e.target.value; localStorage.setItem("w4MealEffectKey", MEAL_EFFECT_KEY); MEAL_SHOWALL = false; renderMealMaxing(); };
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for mealBonuses — same pattern as w1/w2/w3.html's
+ * RECIPE_MODULES.
+ * ============================================================================================ */
+const RECIPE_MODULES = [
+  { name: "mealBonuses", title: "Meal Bonus Multiplier (global)", icon: ["Cooking", "afk_targets"],
+    blurb: "The one multiplier shared by every meal's bonus — Lab jewel, shiny pet, Summoning win bonus, Companion." },
+];
+
+function currentResult(cfg, st) {
+  const sel = CHARSEL[cfg.name] || "account";
+  if (sel !== "account" && st.byChar) {
+    const c = st.byChar.find((x) => String(x.charIdx) === sel);
+    if (c) return c.result;
+  }
+  return st.collapsed;
+}
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, eqMult, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const eq = eqMult(t);
+  const shownVal = isPoints ? rawVal
+    : t.kind === "mul" ? "×" + fmt(eq)
+    : `×${eq >= 1.1 ? eq.toFixed(2) : eq.toFixed(3)}<div class="expr">${rawVal} of pool</div>`;
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="expander" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:320px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${shownVal}</td>
+      <td>${chip(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function lockedRow(t, disp) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  return `<tr class="dim">
+    <td style="max-width:320px"><b>${label}</b>${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+    <td style="text-align:right">—</td>
+    <td><span class="chip dead">locked/inactive</span></td>
+    <td></td>
+    <td class="note">${d.how || t.note || "Not contributing right now — the source system is locked or inactive on this account."}</td>
+  </tr>`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet — the module fills in on its own once it is.</p>
+  </section>`;
+}
+
+function liveModuleHTML(cfg, st) {
+  if (!(cfg.name in CHARSEL)) CHARSEL[cfg.name] = "account";
+  const r = currentResult(cfg, st);
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked, eqMult } = bucketTerms(r);
+  // BUG FIX vs w4.html: r.unknown is an array of free-text reason STRINGS (ctx.unknowns from
+  // stats/engine.mjs) — one term's evaluator can push more than one reason, so r.unknown.length
+  // can exceed r.terms.length, printing nonsense like "5 of 3 sources". Count unknown TERMS instead.
+  const unknownTerms = r.terms.filter((t) => t.status === "unknown");
+  const unknownCount = unknownTerms.length;
+  const perCharCount = r.terms.filter((t) => t.status === "per-char").length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const caveat = (r.lowerBound || perCharCount) ? `<div class="lowerbound">
+    <b>Lower bound.</b> ${unknownCount ? `${unknownCount} of ${r.terms.length} sources could not be derived and sit at their neutral element — the real value is higher.` : "Minor inputs remain unknowable — the real value can only be higher."}
+    ${perCharCount ? ` ${perCharCount} source${perCharCount > 1 ? "s are" : " is"} per-character — pick a character to resolve ${perCharCount > 1 ? "them" : "it"}.` : ""}
+  </div>` : "";
+
+  const charSelHtml = st.byChar ? `<select class="inlinesel charSel" data-mod="${cfg.name}">
+      <option value="account" ${CHARSEL[cfg.name] === "account" ? "selected" : ""}>Account view</option>
+      ${st.byChar.map((c) => `<option value="${c.charIdx}" ${String(c.charIdx) === CHARSEL[cfg.name] ? "selected" : ""}>${charName(c.charIdx)}</option>`).join("")}
+    </select>` : "";
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "x");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span> <span style="flex:1"></span> ${charSelHtml}</h2>
+    ${caveat}
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div>
+        <div class="sub">${CHARSEL[cfg.name] === "account" ? "account view" : "as " + charName(Number(CHARSEL[cfg.name]))}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount - perCharCount}<span class="of">/${r.terms.length}</span></div>
+        <div class="sub">${perCharCount ? `+${perCharCount} per-character` : "sources computed"}</div></div>
+      ${locked.length ? `<div class="tile"><div class="label">Locked / inactive</div><div class="value">${locked.length}</div><div class="sub">not contributing right now</div></div>` : ""}
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Source</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, eqMult, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${locked.length ? `<details class="fold" style="margin-top:6px"><summary>${locked.length} locked/inactive source${locked.length > 1 ? "s" : ""}</summary>
+      <div class="scroll"><table>${locked.map((t) => lockedRow(t, disp)).join("")}</table></div>
+    </details>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".charSel").forEach((sel) => sel.addEventListener("change", (e) => {
+    CHARSEL[e.target.dataset.mod] = e.target.value;
+    renderRecipeModules();
+  }));
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w4) {
+      $("err").innerHTML = `No <code>w4</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W4 = SNAP.entities.w4;
+
+    const [statsRes, glossRes] = await Promise.all([fetch("/api/stats"), fetch("/api/w4")]);
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdown below.";
+
+    renderTiles();
+    renderMealMaxing();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

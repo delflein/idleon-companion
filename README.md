@@ -41,24 +41,61 @@ savemap.mjs     THE MAP: every save key named, documented and evidenced. 225 fam
                 raw keys or magic indices.
 gamedata.mjs    Constants lifted from the client (shiny-pet tables, arcade rows,
                 Number2Letter). v1.19-era — refresh after major patches.
-artifactchance.mjs  Evaluates the client's ~30-term Sailing("BoatArtiMulti") against the
-                save, with a per-term breakdown. Terms it cannot derive (the active vote is
-                runtime UI state; the Tome score needs 118 bespoke stat lookups) are returned
-                as status:"unknown" contributing their neutral element — so the result is an
-                honest LOWER BOUND, never a guess. Check `lowerBound`.
-                Opts worth knowing: `companions` (Set of owned ids — companion.mjs fetches the
-                RTDB `_comp` doc; WITHOUT it several terms are honestly unknown and the result
-                is ~7x low), `labConnectedIds` (lab-board connectivity gates MainframeBonus(10)
-                the vial doubler and (14) Artifact Attraction), `tomePoints`, `activeVote`.
-                KNOWN OPEN: against one account's in-game reading it still lands ~1.7x low with
-                everything supplied. The residual is unexplained and deliberately NOT tuned away.
+gamedata-cards.mjs  GENERATED: the full card system tables (272 cards with star thresholds,
+                bonus texts and values; card-bonus id maps; lab chip key/value tables),
+                extracted verbatim from CardStuff/IDforCardBonus/ChipDesc in N.js.
+stats/          THE STAT ENGINE. engine.mjs defines the recipe contract: a stat is the
+                client's expression transcribed as an ordered term list; evaluation yields
+                {value, terms, unknown, lowerBound} plus per-character as-if-active variants
+                (evaluatePerChar) and long-format metric rows (metricRows). index.mjs is the
+                registry — a recipe added there is automatically in e.stats, in the metrics
+                time-series (rebuild backfills all history), and available to every page.
+                artifact-find.mjs is recipe #1 (the ~30-term Sailing("BoatArtiMulti"));
+                drop-rate.mjs is TotStatMAP["DropRarity"] (~75 terms, per-character);
+                tome.mjs is the TOME SCORE (118 rows, format:"points") — computed natively
+                from bonuses/tome.mjs and fed back as ctx.tomePoints into the other recipes
+                (a floor while any row is unknown; a user-entered score overrides as exact).
+                HONESTY CONTRACT: a term not derivable from the save (companions without the
+                _comp doc, lab connectivity, Tome score, active vote) reports status "unknown"
+                and contributes its neutral element — the result is an honest LOWER BOUND,
+                never a guess. Check `lowerBound`.
+                KNOWN OPEN: against one account's in-game reading artifact-find still lands
+                ~1.7x low with everything supplied. Unexplained, deliberately NOT tuned away.
+bonuses/        Shared evaluators, ONE MODULE PER CLIENT DISPATCHER (summoning, research,
+                thingies, holes, gaming, sailing, breeding, farming, arcade, alchemy, lab,
+                labboard [the connectivity FLOOR SOLVER — proves lab-node connections from
+                the save; never answers "disconnected", only proven/unknown], cards, chips,
+                talents, stamps, bubbles, postoffice,
+                ninja, minehead, starsigns, companions, sushi, arcane, misc, util). Each
+                mirrors the client function's signature — arcadeBonus(ctx, id),
+                shinyBonus(ctx, bonusId) — and is generic where the client table in
+                gamedata.mjs is complete, TABLE-GUARDED where it is partial: calling with an
+                unverified id THROWS ("add to X first") instead of guessing. Evaluators
+                return fragments {value, status, note, parts}; recipes name them into terms.
 domain.mjs      THE parser: raw save -> entities (characters, achievements, artifacts,
                 sailing, atoms, equinox, engines, alchemy, stamps, meals, cards, emperor,
                 misc, w7, caverns) + metricsFrom(). Consumes savemap selectors, not raw
                 indices. Extend here; POST /api/rebuild backfills every stored snapshot
                 retroactively from the raw saves.
+gamedata-farming.mjs  GENERATED: SeedInfo / MarketInfo / MarketExoticInfo (80 rows) /
+                Land Rank Database / sticker tables, verbatim from N.js (extraction script
+                in the session scratchpad; refresh after major patches).
+stats/farming-report.mjs  the /api/farming payload: four modules (medal evo push with
+                marginal-gain ranking, exotic weekly planner with the EXACT client PRNG
+                rotation forecast keyed to WALL CLOCK, OG & stickers, markets & spending).
+                bonuses/farming.mjs is the full _customBlock_FarmingStuffs mirror
+                (N.js:17920-17969 transcribed whole); stats/crop-evo.mjs is the ~29-term
+                NextCropChance recipe. Known client-truth: the in-game "Plot Rank Gain"
+                display OVERSTATES (award code applies fewer sources — both exposed);
+                evolution rolls happen ONCE per collect cycle, so OG-stacking a plot
+                competes with evolution attempts.
 dashboard.html / achievements.html   UI. Server mode when served from localhost;
                 still work as plain files (savedata.js / browser sync) as fallback.
+farming.html    the four farming modules (planning only — NO live timers, by design).
+landrank.html   Land Rank calculator: weighted-log greedy allocation over the client's own
+                curves — goal presets + custom weights, full-respec vs add-only, caps modeled
+                (value 10k×, 5th-column max). No hand-tuned ratios (unlike every community
+                tool — see the 2026-07-18 research). Per-rank rows use each plot's OWN rank.
 sync.js         shared client logic: server API adapter + direct-Firebase fallback.
 fetch-idleon.mjs  legacy CLI fetcher (still works; the server replaces it).
 ```
@@ -70,11 +107,18 @@ fetch-idleon.mjs  legacy CLI fetcher (still works; the server replaces it).
 - **auto** dropdown in the header: OFF / 1 / 5 / 15 / 60 min server-side auto-refresh
   (persisted in the DB). Pages poll and repaint when a new snapshot lands.
 - One snapshot per calendar day is kept (same-day syncs update it) — full raw save,
-  gzipped (~80KB/day), so ANY future metric can be computed over all history.
+  gzipped (~130KB/day), so ANY future metric can be computed over all history.
+- **Metrics are two-layered** (2026-07-18): every sync ALSO appends all metric rows to
+  `metrics_live(ts, key, value)` — intra-day resolution for charts at ~2MB/yr. The
+  snapshot-keyed `metrics` table stays the daily, rebuildable layer. `history()` unions
+  both (the day's final sync exists in both with the same ts; deduped). Trade-off, by
+  design: a metric added later backfills DAILY from the raw anchors; intra-day points
+  exist only from the metric's birth onward. Delta-compressing raws was measured
+  (key-level delta = only 3x smaller — hot keys carry AFK counters) and rejected.
 
 ## API quick reference
 
-`GET /api/state` · `POST /api/sync` · `GET /api/history?keys=a,b&from=ISO` ·
+`GET /api/state` · `POST /api/sync` · `GET /api/farming` · `GET /api/history?keys=a,b&from=ISO` ·
 `GET /api/snapshots` · `GET /api/snapshot/:id/raw` · `GET|POST /api/settings` ·
 `POST /api/connect {url}` · `GET /api/auth` · `POST /api/rebuild`
 
@@ -86,6 +130,12 @@ fetch-idleon.mjs  legacy CLI fetcher (still works; the server replaces it).
    and never a bare index.
 2. `POST /api/rebuild` → all stored snapshots get the new fields, history included.
 3. Render it in the UI.
+
+**For a new STAT specifically**: grep the client for its expression, transcribe it verbatim
+into a recipe in `stats/` (one term per factor/addend), implement any missing dispatcher
+calls in `bonuses/` (extend the table if the id is table-guarded — with N.js evidence cited),
+register it in `stats/index.mjs`, rebuild. History backfills; term-level time-series come free
+(`stat.<name>.<termId>`). Term ids are metric keys — never rename a shipped one.
 Game reference constants (achievement list `achievements-data.json`, artifact/atom
 names, caps in `domain.mjs` REF + dashboard REF, `gamedata.mjs`) are v1.19-era — refresh
 after major patches.

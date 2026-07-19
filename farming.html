@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Farming — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: middle; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .why  { color: var(--ink-muted); font-size: 11px; }
+  .goal { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px;
+          padding: 1px 6px; border-radius: 8px; background: var(--well); border: 1px solid var(--border); }
+  .goal.hot { color: var(--good); border-color: rgba(12,163,12,.5); }
+  .plotgrid { display: grid; grid-template-columns: repeat(9, minmax(88px, 1fr)); gap: 6px; }
+  .plot { background: var(--well); border: 1px solid var(--border); border-radius: 8px; padding: 6px 7px; font-size: 11.5px; }
+  .plot .og { font-weight: 800; color: var(--accent); }
+  .plot.medal { border-color: var(--warning); box-shadow: 0 0 0 1px var(--warning) inset; }
+  .plot .sub { color: var(--ink-muted); font-size: 10.5px; }
+  .wkrow.hot td { background: var(--glow); }
+  .gain { color: var(--good); font-weight: 700; }
+  tr.dim td { opacity: .55; }
+  .legend { color: var(--ink-muted); font-size: 11.5px; margin-top: 6px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  select.inlinesel { font-size: 12px; }
+  a.statlink { color: var(--accent); font-size: 12px; font-weight: 650; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/FarmCrop23.png" alt="" width="26" height="26">Farming</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div id="caveat" class="caveat" style="display:none"></div>
+<div class="cards" id="tiles"></div>
+<section class="panel" id="medalPanel" style="display:none"></section>
+<section class="panel" id="marginalPanel" style="display:none"></section>
+<section class="panel" id="rankPanel" style="display:none"></section>
+<section class="panel" id="exoticPanel" style="display:none"></section>
+<section class="panel" id="plotsPanel" style="display:none"></section>
+<section class="panel" id="stickerPanel" style="display:none"></section>
+<section class="panel" id="marketPanel" style="display:none"></section>
+<section class="panel" id="depotPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let R = null;                 // /api/farming payload
+let SHOW_ALL_MEDAL = false;
+let CADENCE = Number(localStorage.getItem("farmCadence") || 1);   // medal check-ins per day
+let FOCUS = localStorage.getItem("farmFocus") || "evo";
+
+/* Focus presets: weight per goal tag. Nothing is universally "skip" — the weights decide. */
+const FOCUS_PRESETS = {
+  evo:    { label: "Evolution", w: { evo: 10, meta: 9, og: 6, depot: 6, ranks: 5, artifact: 5, droprate: 4, beans: 3, value: 3, exp: 2, costs: 2, growth: 0, other: 1 } },
+  og:     { label: "OG & stickers",  w: { og: 10, meta: 8, ranks: 6, evo: 5, value: 5, depot: 4, beans: 3, exp: 3, artifact: 3, droprate: 3, costs: 2, growth: 1, other: 2 } },
+  ranks:  { label: "Ranks & EXP",    w: { ranks: 10, exp: 8, meta: 8, evo: 4, og: 4, depot: 4, beans: 4, value: 3, artifact: 2, droprate: 2, costs: 3, growth: 1, other: 2 } },
+  cross:  { label: "Cross-skill",    w: { artifact: 8, droprate: 8, depot: 8, other: 7, meta: 7, evo: 3, og: 3, ranks: 3, beans: 2, value: 2, exp: 2, costs: 1, growth: 1 } },
+  all:    { label: "Balanced",       w: { evo: 5, meta: 7, og: 5, depot: 5, ranks: 5, artifact: 5, droprate: 5, beans: 4, value: 4, exp: 4, costs: 3, growth: 2, other: 4 } },
+};
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2);
+  if (a >= 1e9) return (n/1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n/1e6).toFixed(2) + "M";
+  if (a >= 1e4) return (n/1e3).toFixed(1) + "K";
+  if (a >= 100) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+const oneIn = (p) => p > 0 ? (p >= 0.001 ? (100*p).toFixed(2) + "%" : "1 in " + fmt(1/p)) : "—";
+const crop = (id, size = 22) => id == null ? "" : UI.sprite("FarmCrop" + id, size);
+const days = (d) => !isFinite(d) ? "∞" : d >= 365 ? (d/365).toFixed(1) + " yr" : d >= 1 ? d.toFixed(1) + " d" : (d*24).toFixed(1) + " h";
+const dur = (sec) => !isFinite(sec) ? "∞" : sec >= 86400 ? (sec/86400).toFixed(1) + " d" : sec >= 3600 ? (sec/3600).toFixed(1) + " h" : sec >= 60 ? (sec/60).toFixed(0) + " min" : sec.toFixed(0) + " s";
+const nice = (s) => String(s).replaceAll("_", " ");
+
+/* score an exotic row under the current focus */
+const scoreRow = (r) => (FOCUS_PRESETS[FOCUS].w[r.goal] ?? 1) * (r.saturating ? Math.max(0.05, 1 - (r.satRatio ?? 0)) : 1);
+const rowByIdx = (idx) => R.report.exotic.rows.find((r) => r.idx === idx);
+
+const focusSelect = () => `<select class="inlinesel focusPick">${Object.entries(FOCUS_PRESETS)
+  .map(([k, p]) => `<option value="${k}" ${k === FOCUS ? "selected" : ""}>${p.label}</option>`).join("")}</select>`;
+function wireFocus() {
+  document.querySelectorAll(".focusPick").forEach((s) => s.addEventListener("change", (e) => {
+    FOCUS = e.target.value; localStorage.setItem("farmFocus", FOCUS); render();
+  }));
+}
+
+function render() {
+  $("meta").textContent = "synced " + new Date(R.snapTs).toLocaleString();
+
+  if (R.report.unknowns.length) {
+    $("caveat").style.display = "";
+    $("caveat").innerHTML = `<b>Lower bound.</b> ${R.report.unknowns.length} sources could not be fully derived ` +
+      `(meal mastery multis, some lab/superbit gates) — evo &amp; EXP numbers can only be HIGHER. ` +
+      `<a class="statlink" href="stats.html?recipe=cropEvo">full breakdown →</a>`;
+  }
+
+  const o = R.report.overview, ex = R.report.exotic, mk = R.report.markets;
+  const weekEnds = new Date(ex.endsMs);
+  $("tiles").innerHTML = `
+    <div class="tile"><div class="label">Crops found</div><div class="value">${o.cropsFound}<span class="of">/${o.totalCrops}</span></div>
+      <div class="sub">every find feeds the Crop Depot</div></div>
+    <div class="tile"><div class="label">Bean trade quote</div><div class="value">+${fmt(mk.beanTrade)}</div>
+      <div class="sub">have ${fmt(o.beans)} — trading wipes crop stock</div></div>
+    <div class="tile"><div class="label">Exotic buys</div><div class="value">${ex.buysUsed}<span class="of">/${ex.allowed}</span></div>
+      <div class="sub">week ${ex.week} · resets ${weekEnds.toLocaleDateString(undefined,{weekday:"short"})} ${weekEnds.toLocaleDateString()} · ${ex.freePct}% free</div></div>
+    <div class="tile"><div class="label">Instagrows</div><div class="value">${o.instagrow}</div>
+      <div class="sub">7h medal cycles on demand</div></div>
+    <div class="tile"><div class="label">Rank pts unspent</div><div class="value">${o.rankPtsLeft}</div>
+      <div class="sub">Land Rank Database</div></div>
+    <div class="tile"><div class="label">Farming LV</div><div class="value">${o.farmingLv}</div>
+      <div class="sub">Geneology scales past 50/100/…/250</div></div>
+    <div class="tile"><div class="label">Sticker DMG</div><div class="value">×${fmt(o.stickerDmgMulti)}</div>
+      <div class="sub">true damage multiplier</div></div>`;
+
+  renderMedal(); renderMarginals(); renderRanks(); renderExotic();
+  renderPlots(); renderStickers(); renderMarkets(); renderDepot();
+  wireFocus();
+}
+
+function renderMedal() {
+  const m = R.report.evo.medal;
+  if (!m) return;
+  const el = $("medalPanel");
+  el.style.display = "";
+  const rollsPerDay = m.plots.length * Math.min(CADENCE, 24 / m.cycleHours);
+  const rows = SHOW_ALL_MEDAL ? m.remaining : m.remaining.slice(0, 10);
+  el.innerHTML = `
+    <h2>Medal evolution push
+      <span class="hint">each collect of a medal plot rolls evolution once — check-ins, not growth speed, set the pace</span>
+      <span class="spacer"></span>
+      <label class="why">check-ins/day
+        <select id="cadenceSel" class="inlinesel">
+          ${[1, 2, 3].map((c) => `<option value="${c}" ${c === CADENCE ? "selected" : ""}>${c}${c === 3 ? " (max ~3.4)" : ""}</option>`).join("")}
+        </select></label>
+    </h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${crop(m.frontier, 28)}<div class="label">Frontier crop</div><div class="value">#${m.frontier}</div>
+        <div class="sub">${329 - m.frontier} crops left in the Medal chain</div></div>
+      <div class="tile"><div class="label">Next crop odds</div><div class="value">${oneIn(m.remaining[0]?.chancePerCycle)}</div>
+        <div class="sub">per collect, per plot — the only lever is your Crop Evo Chance stat</div></div>
+      <div class="tile"><div class="label">Evo rolls/day</div><div class="value">${rollsPerDay.toFixed(0)}</div>
+        <div class="sub">${m.plots.length} medal plots × ${CADENCE} check-in${CADENCE > 1 ? "s" : ""} (cycle ${m.cycleHours}h)</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Crop</th><th style="text-align:right">Chance / roll</th><th style="text-align:right">Expected time</th></tr>
+      ${rows.map((r) => `<tr>
+        <td>${crop(r.cropId)} #${r.cropId}</td>
+        <td style="text-align:right">${oneIn(r.chancePerCycle)}</td>
+        <td style="text-align:right"><b>${days(r.expectedCycles / rollsPerDay)}</b></td>
+      </tr>`).join("")}
+    </table></div>
+    ${m.remaining.length > 10 ? `<button class="showmore" id="medalMore">${SHOW_ALL_MEDAL ? "show fewer" : `show all ${m.remaining.length} crops`}</button>` : ""}
+    <div class="legend">Expected value of the geometric wait at your cadence — every ×gain below shortens ALL rows at once. Instagrows finish a growing cycle but add no extra rolls on a grown plot. <a class="statlink" href="stats.html?recipe=cropEvo">full Crop Evo Chance breakdown →</a></div>`;
+  $("cadenceSel").addEventListener("change", (e) => { CADENCE = Number(e.target.value); localStorage.setItem("farmCadence", CADENCE); render(); });
+  const more = $("medalMore");
+  if (more) more.addEventListener("click", () => { SHOW_ALL_MEDAL = !SHOW_ALL_MEDAL; render(); });
+}
+
+function renderMarginals() {
+  const ms = R.report.evo.marginals;
+  if (!ms.length) return;
+  const avail = (x) => {
+    if (x.exoticIdx == null) return "";
+    if (x.nextInWeeks === 0) return `<span class="chip live">in rotation NOW</span>`;
+    if (x.nextInWeeks != null) return `<span class="chip soon">week +${x.nextInWeeks}</span>`;
+    return `<span class="chip dead">not in next 20 wk</span>`;
+  };
+  // in-rotation exotics float above unavailable ones of similar strength
+  const sorted = [...ms].sort((a, b) =>
+    (b.factor * (b.exoticIdx != null && b.nextInWeeks !== 0 ? 0.7 : 1)) -
+    (a.factor * (a.exoticIdx != null && a.nextInWeeks !== 0 ? 0.7 : 1)));
+  $("marginalPanel").style.display = "";
+  $("marginalPanel").innerHTML = `
+    <h2>What to buy for evolution <span class="hint">exact multiplier each action puts on every medal row above — the biggest levers you control</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Upgrade</th><th style="text-align:right">Stat gain</th><th>Costs</th><th>Available</th></tr>
+      ${sorted.map((x) => `<tr>
+        <td><b>${nice(x.label)}</b><div class="why">${x.where} · ${x.note}</div></td>
+        <td style="text-align:right" class="gain">×${x.factor.toFixed(3)}</td>
+        <td class="note">${x.action}</td>
+        <td>${avail(x)}</td>
+      </tr>`).join("")}
+    </table></div>`;
+}
+
+function renderRanks() {
+  const rk = R.report.markets.rankDb;
+  const total = R.report.evo.plots.reduce((t, p) => t + p.rank, 0);
+  const unspent = R.report.overview.rankPtsLeft;
+  const groups = { "Evolution": [0, 3, 10, 15], "Production": [1, 8, 17], "Soil EXP": [2, 6, 13], "Overgrowth": [7, 11, 18], "Farm EXP": [5, 12, 16] };
+  const sumOf = (ids) => ids.reduce((t, i) => t + rk[i].level, 0);
+  $("rankPanel").style.display = "";
+  $("rankPanel").innerHTML = `
+    <h2>Land Rank Database <span class="hint">${total} points · <b>${unspent} unspent</b></span>
+      <span class="spacer"></span>
+      <a class="statlink" href="landrank.html">open the Land Rank Calculator →</a></h2>
+    <div class="cards">
+      ${Object.entries(groups).map(([g, ids]) => `
+        <div class="tile"><div class="label">${g}</div>
+          <div class="value">${fmt(sumOf(ids))}<span class="of"> lv</span></div>
+          <div class="sub">${ids.map((i) => nice(rk[i].name).split(" ")[1] ?? "").join(" / ")}</div></div>`).join("")}
+    </div>
+    <div class="legend">The calculator recommends a full allocation for a chosen goal — no hand-tuned ratios, caps modeled. ⚠ The in-game "rank XP gain" display overstates (client-verified); rank plots in order.</div>`;
+}
+
+function renderExotic() {
+  const ex = R.report.exotic;
+  const current = ex.currentSlots.map((idx, slot) => ({ slot, ...rowByIdx(idx) }))
+    .map((c) => ({ ...c, score: scoreRow(c) }))
+    .sort((a, b) => b.score - a.score);
+  const maxScore = Math.max(...current.map((c) => c.score));
+  // spend-vs-save under the CURRENT focus: same goal, notably higher score, within 4 weeks
+  const horizon = ex.weeksAhead.slice(0, 4);
+  for (const c of current) {
+    c.betterSoon = [];
+    for (const wk of horizon)
+      for (const idx of wk.slots) {
+        const r = rowByIdx(idx);
+        if (r && r.goal === c.goal && scoreRow(r) > c.score * 1.25) c.betterSoon.push({ week: wk.week - ex.week, name: r.name });
+      }
+  }
+  const advice = (c) => c.betterSoon.length
+    ? `hold — ${c.betterSoon.slice(0, 2).map((b) => `${nice(b.name)} wk +${b.week}`).join(", ")}`
+    : c.score >= maxScore * 0.6 ? "<b>buy</b>" : c.score >= maxScore * 0.3 ? "ok" : "low fit";
+  $("exoticPanel").style.display = "";
+  $("exoticPanel").innerHTML = `
+    <h2>Exotic Market — this week
+      <span class="hint">scored for your focus:</span> ${focusSelect()}</h2>
+    <div class="scroll"><table>
+      <tr><th>Row</th><th style="text-align:right">Bonus</th><th style="text-align:right">LV</th><th style="text-align:right">+lv / buy</th><th>For +1 more lv/buy</th><th>Fit</th><th>Advice</th></tr>
+      ${current.map((c) => `<tr class="${c.score < maxScore * 0.3 ? "dim" : ""}">
+        <td>${crop(c.cropId, 18)} <b>${nice(c.name)}</b><div class="why">${nice(c.desc).split("@")[0]}</div></td>
+        <td style="text-align:right" title="${c.saturating ? `saturating: approaches ${c.coeff} and flattens — ${(100*(c.satRatio ?? 0)).toFixed(0)}% of cap reached` : "linear, no cap"}">${c.saturating ? `${c.bonus.toFixed(1)} <span class="why">/ ${fmt(c.coeff)}</span>` : fmt(c.bonus)}</td>
+        <td style="text-align:right">${c.level}</td>
+        <td style="text-align:right">+${c.levelsPerBuy}</td>
+        <td class="note">${c.softCapped ? `<span class="chip dead">soft-capped</span> <span class="why">needs ${fmt(c.stockForNextLv)} more ${"crop"}</span>`
+            : c.stockForNextLv != null ? `farm ${fmt(c.stockForNextLv)} more ${crop(c.cropId, 14)}` : "—"}</td>
+        <td><span class="goal ${c.score >= maxScore * 0.6 ? "hot" : ""}">${c.goal}</span></td>
+        <td class="note">${advice(c)}</td>
+      </tr>`).join("")}
+    </table></div>
+    <div class="legend">${ex.allowed - ex.buysUsed} buys left this week (as of last sync) · first ${ex.freePct}% of buys are free · a paid buy ZEROES the cost crop's stock. "+lv/buy" grows with the log of your stock — past the soft-cap, farming more of that fruit is not worth it.</div>
+    <details class="fold" style="margin-top:8px">
+      <summary>Rotation forecast — next ${ex.weeksAhead.length} weeks</summary>
+      <div class="scroll"><table>
+        <tr><th>Week</th><th>Starts</th><th class="note">Rows (bold = strong under your focus)</th></tr>
+        ${ex.weeksAhead.map((w) => {
+          const rows = w.slots.map((idx) => {
+            const r = rowByIdx(idx);
+            const hot = r && scoreRow(r) >= maxScore * 0.6;
+            return hot ? `<b>${nice(r.name)}</b>` : nice(r?.name ?? "#" + idx);
+          });
+          const hotCount = w.slots.filter((idx) => { const r = rowByIdx(idx); return r && scoreRow(r) >= maxScore * 0.6; }).length;
+          return `<tr class="wkrow ${hotCount >= 2 ? "hot" : ""}">
+            <td>+${w.week - ex.week}</td>
+            <td class="why">${new Date(w.startMs).toLocaleDateString()}</td>
+            <td class="note">${rows.join(" · ")}</td>
+          </tr>`;
+        }).join("")}
+      </table></div>
+    </details>`;
+}
+
+function renderPlots() {
+  const plots = R.report.evo.plots;
+  $("plotsPanel").style.display = "";
+  $("plotsPanel").innerHTML = `
+    <h2>Plots — OG &amp; ranks <span class="hint">"next OG" = average real time to the next tier at your current multis; collecting resets OG</span></h2>
+    <div class="plotgrid">
+      ${(() => {   // in-game floors stack BOTTOM-UP: plots 0-8 are the bottom row
+        const rows = [];
+        for (let r = 0; r * 9 < plots.length; r++) rows.push(plots.slice(r * 9, r * 9 + 9));
+        return rows.reverse().flat();
+      })().map((p) => `
+        <div class="plot ${p.tier === 6 ? "medal" : ""}" title="plot ${p.idx} · rank ${p.rank} · OG chance ${oneIn(p.nextOGchance)}">
+          ${crop(p.cropId, 20)} <span class="og">OG ${p.og}</span>
+          <div class="sub">×${fmt(p.ogMulti)} value</div>
+          <div class="sub">next OG ≈ <b>${days(p.nextOgAvgDays)}</b></div>
+          <div class="sub">rank ${p.rank} · ${p.terminal ? "final crop" : p.tier === 6 ? "evo " + oneIn(p.evoChance) : "evolving"}</div>
+        </div>`).join("")}
+    </div>
+    <div class="legend">Medal plots outlined — remember: letting a medal plot ride for OG costs evolution rolls.</div>`;
+}
+
+function renderStickers() {
+  const og = R.report.og;
+  $("stickerPanel").style.display = "";
+  $("stickerPanel").innerHTML = `
+    <h2>Megacrop stickers <span class="hint">odds per growth/OG tick — a plot's 2^OG multiplies them</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile"><div class="label">Dry days <span class="tip" title="Doggie Sticker mechanic: every day without finding a sticker DOUBLES the odds (up to 2^12), then +1500x per day past 11. Finding one resets the counter to 0.">ⓘ</span></div>
+        <div class="value">${og.dryDays}</div>
+        <div class="sub">odds ×${fmt(Math.max(1, Math.pow(2, Math.min(12, og.dryDays)) + 1500*Math.max(0, og.dryDays-11)))} and climbing daily</div></div>
+      <div class="tile"><div class="label">Odds multi</div><div class="value">×${fmt(og.oddsMulti)}</div>
+        <div class="sub">crowns · depot · arcade · sushi · dry days</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Sticker</th><th style="text-align:right">Found</th><th style="text-align:right">Bonus</th><th style="text-align:right">Base odds / tick</th><th class="note">Effect</th></tr>
+      ${og.stickerCounts.map((s, i) => `<tr>
+        <td><b>${nice(s.name)}</b></td>
+        <td style="text-align:right">${s.count}</td>
+        <td style="text-align:right">${fmt(s.bonus)}%</td>
+        <td style="text-align:right">${oneIn(og.stickerOdds[i]?.odds)}</td>
+        <td class="note">${nice(s.desc)}</td>
+      </tr>`).join("")}
+    </table></div>
+    <div class="legend">A 2^25 OG glassy plot multiplies its tick odds ×33M — the odds column is BEFORE that.</div>`;
+}
+
+function renderMarkets() {
+  const mk = R.report.markets;
+  const sweet = R.report.og.sweetSpots;
+  const row = (u) => `<tr class="${u.level >= u.maxLv ? "dim" : ""}">
+    <td><b>${nice(u.name)}</b><div class="why">${nice(u.desc)}</div></td>
+    <td style="text-align:right">${u.level}<span class="of">/${u.maxLv}</span></td>
+    <td style="text-align:right">${u.gmoScaled != null ? "×" + fmt(u.gmoScaled) : fmt(u.bonus)}</td>
+    <td>${u.level >= u.maxLv ? '<span class="chip live">maxed</span>'
+        : u.tab === "day" ? `${crop(u.costCrop, 18)} ${fmt(u.costQty)} <span class="why">(have ${fmt(u.stock)})</span> ${u.affordable ? '<span class="chip live">✓</span>' : ""}`
+        : `${fmt(u.costQty)} beans ${u.affordable ? '<span class="chip live">✓</span>' : ""}`}</td>
+    <td class="note">${u.harvests ? `active <b>${dur(u.harvests.activeSec)}</b> <span class="why">(harvest-all every ~${dur(u.harvests.intervalSec)}, plots hit OG ${u.harvests.atOgActive})</span><br>passive <b>${days(u.harvests.passiveDays)}</b> <span class="why">(daily collect @ OG ${u.harvests.atOgPassive})</span>` : ""}</td>
+  </tr>`;
+  const gl = sweet.find((s) => s.tier === 5);
+  $("marketPanel").style.display = "";
+  $("marketPanel").innerHTML = `
+    <h2>Markets <span class="hint">day pays crops (the crop shifts per level) · night pays beans · costs include Emperor + Better Day/Night reductions</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile"><div class="label">OG per day <span class="tip" title="A fresh glassy plot reaches this OG in 24h at your growth multis — what one daily collect banks. For ACTIVE play, value/time peaks at OG ${gl?.og ?? "?"} (~${days(gl?.days)} per harvest): past it, each level takes ~2.5× longer but only doubles the yield.">ⓘ</span></div>
+        <div class="value">OG ${gl?.reached24 ?? "—"}</div>
+        <div class="sub">glassy, daily collect → ×${fmt(Math.pow(2, gl?.reached24 ?? 0))} per harvest</div></div>
+      <div class="tile"><div class="label">Crop value cap</div><div class="value">${fmt(mk.valueCap)}×</div>
+        <div class="sub">10,000 base + Stalk Value exotics</div></div>
+      <div class="tile"><div class="label">Product doubler</div><div class="value">${fmt(mk.doublerPct)}%</div>
+        <div class="sub">guaranteed ×${Math.floor(1 + mk.doublerPct/100)} + ${(mk.doublerPct % 100).toFixed(0)}% for one more</div></div>
+      <div class="tile"><div class="label">Crops on vine</div><div class="value">${mk.cropsOnVine.expected.toFixed(2)}</div>
+        <div class="sub">per grow (${mk.cropsOnVine.pct.toFixed(0)}% bonus)</div></div>
+      <div class="tile"><div class="label">Farming EXP</div><div class="value">×${fmt(mk.farmingExpMulti)}</div>
+        <div class="sub">lower bound (all-skill multi excluded)</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Day Market</th><th style="text-align:right">LV</th><th style="text-align:right">Bonus</th><th>Next level costs</th><th class="note">How long to farm it (all ${R.report.overview.plots} plots locked)</th></tr>
+      ${mk.day.map(row).join("")}
+      <tr><th>Night Market</th><th style="text-align:right">LV</th><th style="text-align:right">Bonus</th><th>Next level costs</th><th></th></tr>
+      ${mk.night.map(row).join("")}
+    </table></div>
+    ${renderNightAdvisor(mk)}`;
+}
+
+function renderNightAdvisor(mk) {
+  const adv = mk.nightAdvisor;
+  if (!adv) return "";
+  const W = FOCUS_PRESETS[FOCUS].w;
+  const rows = adv.rows.filter((r) => !r.maxed)
+    .map((r) => ({ ...r, fit: (W[r.goal] ?? 1) * (r.budgetGain - 1) }))
+    .sort((a, b) => b.fit - a.fit);
+  const maxFit = Math.max(1e-9, ...rows.map((r) => r.fit));
+  return `
+    <h2 style="margin-top:16px">Night Market — where to put the beans
+      <span class="hint">budget = banked ${fmt(R.report.overview.beans)} + trade quote ${fmt(mk.beanTrade)} = <b>${fmt(adv.budget)}</b> · focus:</span> ${focusSelect()}</h2>
+    <div class="scroll"><table>
+      <tr><th>Upgrade</th><th style="text-align:right">Next lv</th><th style="text-align:right">Full budget buys</th><th style="text-align:right">Total gain</th><th>Fit</th></tr>
+      ${rows.map((r) => `<tr class="${r.fit < maxFit * 0.2 ? "dim" : ""}">
+        <td><b>${nice(r.name)}</b> <span class="why">lv ${r.level}/${r.maxLv}</span></td>
+        <td style="text-align:right">${fmt(r.nextCost)} <span class="why">×${r.nextGain.toFixed(3)}</span></td>
+        <td style="text-align:right">${r.budgetLevels > 0 ? `+${r.budgetLevels} lv <span class="why">(${fmt(r.budgetSpend)})</span>` : "can't afford"}</td>
+        <td style="text-align:right" class="gain">${r.budgetLevels > 0 ? "×" + fmt(r.budgetGain) : "—"}</td>
+        <td><span class="goal ${r.fit >= maxFit * 0.6 ? "hot" : ""}">${r.goal}</span></td>
+      </tr>`).join("")}
+    </table></div>
+    <div class="legend">"Full budget buys" pours everything into that ONE upgrade (costs compound per level). Super GMO multiplies every other GMO — its gain column already reflects that. A trade wipes crop stock; your GMO thresholds re-qualify as stock regrows.</div>`;
+}
+
+function renderDepot() {
+  const dep = R.report.markets.depot;
+  $("depotPanel").style.display = "";
+  $("depotPanel").innerHTML = `
+    <h2>Crop Depot <span class="hint">every unique crop found scales all of these — the medal push feeds them directly</span></h2>
+    <div class="cards">
+      ${dep.map((d) => `<div class="tile">
+        <div class="label">${d.label}</div>
+        <div class="value">${d.fmt.startsWith("x") ? "×" + fmt(d.value) : "+" + fmt(d.value) + (d.fmt.includes("%") ? "%" : "")}</div>
+        <div class="sub">${d.status !== "computed" ? d.status : ""}</div>
+      </div>`).join("")}
+    </div>`;
+}
+
+async function boot() {
+  try {
+    const res = await fetch("/api/farming");
+    const j = await res.json();
+    if (!j.ok || !j.report) { $("err").textContent = "No snapshot with a stored raw save yet — Sync first."; return; }
+    R = { report: j.report, snapTs: j.ts };
+    render();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

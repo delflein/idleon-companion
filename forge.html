@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/ForgeA.png" alt="" width="26" height="26">Forge &amp; Bribes</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<div class="grid2">
+  <section class="panel" id="forgePanel" style="display:none"></section>
+  <section class="panel" id="bribesPanel" style="display:none"></section>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w1 static glossary (item names + flavor text)
+
+/* ---------- Bribes module state ---------- */
+let BRIBE_SHOWALL = false;
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* "CraftMat1" -> "Craft Mat 1", "OakTree" -> "Oak Tree" — item raw names from gamedata
+ * are camelCase with no separators; stamp/anvil display names use "_" instead, handled by
+ * a plain replace. Both funnel through this before hitting the page. */
+const niceItem = (s) => String(s ?? "")
+  .replace(/_/g, " ")
+  .replace(/([a-z])([A-Z])/g, "$1 $2")
+  .replace(/([A-Za-z])(\d)/g, "$1 $2")
+  .trim();
+
+/* ============================================================================================
+ * Forge & Bribes (light): forge track levels, bribe checklist.
+ * ============================================================================================ */
+function renderForgeBribes() {
+  const w1 = SNAP.entities.w1 || {};
+  const forge = w1.forge?.upgrades || [];
+  const forgeEff = new Map((GLOSS?.forgeEffects || []).map((e) => [e.index, e]));
+  const forgeRows = forge.map((u) => {
+    const e = forgeEff.get(u.index);
+    return `<tr><td><b>${niceItem(u.name)}</b>${e ? `<div class="note">${e.effect}</div>` : ""}</td>
+      <td style="text-align:right">Lv ${u.level}<span class="of">/${u.maxLevel}</span></td></tr>`;
+  }).join("");
+  $("forgePanel").style.display = "";
+  $("forgePanel").innerHTML = `
+    <h2>Forge <span class="hint">Six upgrade tracks, gold cost only.</span></h2>
+    <div class="scroll"><table><tr><th>Track</th><th style="text-align:right">Level</th></tr>${forgeRows}</table></div>
+  `;
+
+  const bribes = w1.bribes || { owned: 0, total: 0, missing: [] };
+  const bribeEff = new Map((GLOSS?.bribeEffects || []).map((e) => [e.index, e]));
+  const missingSorted = (bribes.missing || []).slice().sort((a, b) => a.price - b.price);
+  const shown = BRIBE_SHOWALL ? missingSorted : missingSorted.slice(0, 12);
+  const bribeRows = shown.map((b) => {
+    const e = bribeEff.get(b.index);
+    return `<tr><td><b>${niceItem(b.name)}</b>${e?.desc ? `<div class="note">${e.desc}</div>` : ""}</td>
+      <td style="text-align:right">${fmt(b.price)}</td></tr>`;
+  }).join("");
+  $("bribesPanel").style.display = "";
+  $("bribesPanel").innerHTML = `
+    <h2>Bribes <span class="hint">One-time account unlocks from Mr. Pigibank, cheapest missing first.</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile"><div class="label">Owned</div><div class="value">${bribes.owned}<span class="of">/${bribes.total}</span></div>
+        <div class="sub">${bribes.total - bribes.owned} left to buy</div></div>
+    </div>
+    <div class="scroll"><table><tr><th>Bribe</th><th style="text-align:right">Price</th></tr>${bribeRows}</table></div>
+    ${missingSorted.length > 12 ? `<button class="showmore" id="bribeShowMore">${BRIBE_SHOWALL ? "show fewer" : `show ${missingSorted.length - 12} more`}</button>` : ""}
+  `;
+  const more = $("bribeShowMore");
+  if (more) more.onclick = () => { BRIBE_SHOWALL = !BRIBE_SHOWALL; renderForgeBribes(); };
+}
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const w1 = SNAP.entities.w1 || {};
+  const bribes = w1.bribes || { owned: 0, total: 0 }, forge = (w1.forge && w1.forge.upgrades) || [];
+  const forgeMaxed = forge.filter((u) => u.level >= u.maxLevel).length;
+
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Bribe", 28, "etc")}<div class="label">Bribes owned</div><div class="value">${bribes.owned}<span class="of">/${bribes.total || 41}</span></div><div class="sub">${(bribes.total || 41) - bribes.owned} left</div></div>
+    <div class="tile">${UI.sprite("ForgeA", 28, "data")}<div class="label">Forge tracks maxed</div><div class="value">${forgeMaxed}<span class="of">/${forge.length || 6}</span></div><div class="sub">level equals the track's cap</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w1) {
+      $("err").innerHTML = `No <code>w1</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+
+    const glossRes = await fetch("/api/w1");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderForgeBribes();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

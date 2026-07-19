@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Divinity — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look (this page only
+   * needs the expander/parts row bits for the god table's click-to-expand). */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/afk_targets/Divinity.png" alt="" width="26" height="26">Divinity</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="divinityPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w5 static glossary
+let W5 = null;      // SNAP.entities.w5 shortcut
+
+/* ---------- generic helpers (same as w1-w5.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+/* Entity text already has "_" -> " " (domain.mjs); this strips the N.js value-placeholder
+ * punctuation ("{", "}", "#", etc.) that domain.mjs leaves untouched. */
+const stripPh = (s) => String(s ?? "").replace(/[{}<>$@#]/g, "").replace(/\s+/g, " ").trim();
+
+function charName(i) { return SNAP?.charNames?.[i] ?? ("char " + i); }
+
+function levelBar(level, maxLevel) {
+  if (!maxLevel || level <= maxLevel) {
+    const pct = maxLevel ? Math.max(0, Math.min(100, (level / maxLevel) * 100)) : 0;
+    return `Lv ${fmt(level)}${maxLevel ? `<span class="of">/${fmt(maxLevel)}</span>` : ""}
+      ${maxLevel ? `<div class="bar-bg" style="margin-top:3px"><div class="bar-fill" style="width:${pct}%"></div></div>` : ""}`;
+  }
+  return `Lv ${fmt(level)} <span class="chip user" title="Above the recorded max level.">extended past ${fmt(maxLevel)}</span>`;
+}
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const d = W5.divinity;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Divinity", 28, "afk_targets")}<div class="label">God Rank</div><div class="value">${d.godRank}<span class="of">/${GLOSS?.godRankMax ?? 10}</span></div><div class="sub">${fmt(d.particles)} particles</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * MODULE 2 — Divinity: 10-god table (level/cost-to-next in real currency/major value/linked
+ * chars) + god-rank/points/particles tiles.
+ * ============================================================================================ */
+const CURRENCY_LABEL = { bits: "Bits", sailingGold: "Sailing Gold", coins: "Coins", particles: "Particles" };
+
+function godRowHtml(g) {
+  const gloss = GLOSS?.gods?.find((x) => x.idx === g.idx);
+  const afford = g.currencyOnHand != null && g.costToNext != null
+    ? (g.currencyOnHand >= g.costToNext
+        ? `<span class="chip live">can afford</span>`
+        : `<span class="note">need ${fmt(g.costToNext - g.currencyOnHand)} more</span>`)
+    : `<span class="chip soon">unknown</span>`;
+  const majorText = g.majorValueKnown
+    ? `+${fmt(g.majorValue)}%`
+    : `<span class="chip soon" title="Bespoke [0.1x,1.8x] efficiency-driven curve, not the generic level x multi x emporium form every other god uses — not modeled.">unmodeled</span>`;
+  const linked = g.linkedChars.length ? g.linkedChars.map(charName).join(", ") : "—";
+  return `<tr class="expander" data-gexp="${g.idx}">
+    <td><b>${g.name}</b>${g.maxLevelLowerBound ? ` <span class="chip soon" title="Cap can rise further from CoralKid/Minehead/Vault sources not fully derivable yet.">cap may be higher</span>` : ""}</td>
+    <td>${levelBar(g.level, g.maxLevel)}</td>
+    <td>${fmt(g.costToNext)} <span class="of">${CURRENCY_LABEL[g.currency] ?? g.currency}</span><div class="expr">${afford}</div></td>
+    <td style="text-align:right">${majorText}</td>
+    <td class="note">${stripPh(g.minorDesc)}</td>
+    <td class="note">${linked}</td>
+  </tr>
+  <tr class="parts" data-gparts="${g.idx}" style="display:none"><td colspan="6">
+    <div class="partrow"><b>Fixed ability (always on, not level-scaled):</b> ${gloss ? stripPh(gloss.majorDesc) : ""}</div>
+    <div class="partrow">The <b>Major value</b> column (${majorText.replace(/<[^>]+>/g, "")}) is a SEPARATE levelable percent that feeds Divinity's own output-multiplier chain for some gods — it does not scale the fixed-ability text above.</div>
+    ${gloss?.giftFlavor ? `<div class="partrow expr">"${gloss.giftFlavor}"</div>` : ""}
+  </td></tr>`;
+}
+
+function renderDivinity() {
+  const d = W5.divinity;
+  $("divinityPanel").style.display = "";
+  $("divinityPanel").innerHTML = `
+    <h2>${UI.sprite("Divinity", 20, "afk_targets")} Divinity <span class="hint">The Altar — 10 gods, each with a MINOR passive (from linking) and a levelable MAJOR blessing paid in that god's own currency.
+      <span class="tip" title="God Rank (0-${GLOSS?.godRankMax ?? 10}) gates which gods are even selectable — it advances via the Offering mini-game, which spends Divinity Points (not bits/gold/coins) at a tiered risk/reward chance you pick each attempt. Once every god is unlocked (rank 10), a Jade Emporium node scales every MAJOR blessing further.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("Divinity", 28, "afk_targets")}<div class="label">God Rank</div><div class="value">${d.godRank}<span class="of">/${GLOSS?.godRankMax ?? 10}</span></div><div class="sub">gates which gods are selectable</div></div>
+      <div class="tile"><div class="label">Divinity Points</div><div class="value">${fmt(d.points)}</div><div class="sub">spent on Offerings (God Rank) &amp; CoralKid</div></div>
+      <div class="tile"><div class="label">Particles</div><div class="value">${fmt(d.particles)}</div><div class="sub">currency for 3 gods' blessings</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>God</th><th>Major blessing level</th><th>Cost to next</th><th style="text-align:right">Major value</th><th>Minor (link) bonus</th><th>Linked chars</th></tr>
+      ${d.gods.map(godRowHtml).join("")}
+    </table></div>
+    <p class="note" style="margin-top:6px">Click a row for its full blessing description. Minor-link bonus is a documented LOWER BOUND on the account page's Divinity numbers (the BIG_P alchemy bubble and a CoralKid upgrade aren't fully read from the save yet) — not re-derived here.</p>
+  `;
+  document.querySelectorAll("tr[data-gexp]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-gparts="${tr.dataset.gexp}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w5) {
+      $("err").innerHTML = `No <code>w5</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W5 = SNAP.entities.w5;
+
+    const glossRes = await fetch("/api/w5");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderDivinity();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

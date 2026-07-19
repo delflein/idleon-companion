@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Land Rank Calculator — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: middle; }
+  .note { color: var(--ink-2); white-space: normal; font-size: 12px; }
+  .why  { color: var(--ink-muted); font-size: 11px; }
+  tr.dim td { opacity: .5; }
+  .weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 18px; margin: 8px 0; }
+  .weights label { display: block; font-size: 12px; font-weight: 650; color: var(--ink-muted); }
+  .weights output { color: var(--accent); font-weight: 800; margin-left: 6px; }
+  .weights input[type=range] { width: 100%; }
+  .controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+  .controls label { font-size: 12.5px; color: var(--ink-2); display: flex; gap: 6px; align-items: center; }
+  .legend { color: var(--ink-muted); font-size: 11.5px; margin-top: 6px; }
+  .capnote { color: var(--warning); font-size: 11.5px; font-weight: 650; margin: 6px 0; }
+  .delta-up { color: #6fdd6f; font-weight: 800; }
+  .delta-dn { color: #f0a63f; font-weight: 800; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 6px 0; }
+
+  /* ---- the in-game-styled board ---- */
+  .lrboard {
+    background: linear-gradient(180deg, #4a2e1b, #38220f);
+    border: 3px solid #6b4a2f; border-radius: 18px;
+    box-shadow: inset 0 2px 0 rgba(255,255,255,.08), inset 0 -3px 8px rgba(0,0,0,.4);
+    padding: 18px 16px 12px; max-width: 620px; margin: 10px auto;
+  }
+  .lrboard h3 {
+    text-align: center; color: #f4d789; font-weight: 800; letter-spacing: .5px;
+    text-shadow: 0 2px 0 rgba(0,0,0,.5); margin: 0 0 12px; font-size: 17px;
+  }
+  .lrgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px 8px; }
+  .lrslot { text-align: center; cursor: pointer; position: relative; }
+  .lrslot .orb {
+    width: 72px; height: 72px; border-radius: 50%; margin: 0 auto;
+    background: radial-gradient(circle at 35% 30%, #5d3d24, #241203 70%);
+    border: 3px solid #1c0e02; box-shadow: inset 0 3px 6px rgba(0,0,0,.6), 0 1px 0 rgba(255,255,255,.12);
+    display: grid; place-items: center; color: #ffe9b0; font-weight: 800; font-size: 17px;
+  }
+  .lrslot.sel .orb { outline: 3px solid #f0b649; outline-offset: 1px; }
+  .lrslot.seedcol .orb { background: radial-gradient(circle at 35% 30%, #4c4426, #1e1a06 70%); }
+  .lrslot .lv { color: #f0b649; font-weight: 800; font-size: 11.5px; margin-top: 3px; text-transform: uppercase; }
+  .lrslot .badge {
+    position: absolute; top: -4px; right: 4px; font-size: 11px; font-weight: 800;
+    text-shadow: 0 1px 0 rgba(0,0,0,.6);
+  }
+  .lrslot .orb .now { display: block; font-size: 10px; color: #b99b6d; font-weight: 650; }
+  .lrdetail {
+    margin-top: 14px; background: rgba(0,0,0,.35); border: 2px solid #6b4a2f; border-radius: 12px;
+    padding: 10px 14px; color: #f4e3c0; font-size: 12.5px; min-height: 40px;
+  }
+  .lrdetail b { color: #ffe9b0; letter-spacing: .3px; }
+  .lrdetail .why { color: #c9ae85; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/FarmCrop46.png" alt="" width="26" height="26">Land Rank Calculator</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<section class="panel" id="setupPanel">
+  <h2>Goal <span class="hint">no hidden ratios — every point goes where it buys the most weighted gain; caps are modeled, so dead points show up as dead</span></h2>
+  <div class="why">loading save…</div>
+</section>
+<div class="cards" id="tiles"></div>
+<section class="panel" id="boardPanel" style="visibility:hidden">
+  <div class="lrboard">
+    <h3>Land Rank Database</h3>
+    <div class="lrgrid" id="lrgrid"></div>
+    <div class="lrdetail" id="lrdetail">— select a bonus —</div>
+  </div>
+  <div id="capnote"></div>
+  <details class="fold"><summary>full table (before / after)</summary><div id="tableWrap"></div></details>
+  <div class="legend" id="legend"></div>
+</section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let R = null;
+let PRESET = localStorage.getItem("lrPreset") || "evo";
+let W = null;
+let MODE = localStorage.getItem("lrMode") || "respec";
+let MAX_SEEDS = localStorage.getItem("lrSeeds") !== "0";
+let SELECTED = null;      // selected upgrade idx for the detail bar
+let LAST = null;          // last optimize() result
+
+const GROUPS = {
+  evo:   { label: "Evolution", ids: [0, 3, 10, 15] },
+  og:    { label: "Overgrowth", ids: [7, 11, 18] },
+  soil:  { label: "Rank EXP", ids: [2, 6, 13] },
+  value: { label: "Crop value", ids: [1, 8, 17] },
+  exp:   { label: "Farming EXP", ids: [5, 12, 16] },
+};
+const SEED_IDS = [4, 9, 14, 19];
+const PRESETS = {
+  evo:      { label: "Evolution", w: { evo: 10, soil: 3, og: 2, exp: 1, value: 1 } },
+  balanced: { label: "Balanced", w: { og: 5, soil: 2, evo: 2, exp: 1, value: 2 } },
+  endgame:  { label: "Endgame (no evo)", w: { og: 5, soil: 3, exp: 2, evo: 0, value: 2 } },
+  soilgrow: { label: "Rank Exp", w: { soil: 10, og: 2, evo: 1, exp: 1, value: 0 } },
+  custom:   { label: "Custom", w: null },
+};
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e6) return n.toExponential(2);
+  if (a >= 1e4) return (n/1e3).toFixed(1) + "K";
+  if (a >= 100) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+const nice = (s) => String(s).replaceAll("_", " ");
+
+/* ---- model (client formulas; see farming-report rankCalcCtx) ---- */
+function bonusOf(i, L) {
+  const u = R.rankDb[i];
+  const raw = (i % 5 === 4) ? u.base * L : 1.7 * u.base * L / (L + 80);
+  return R.calc.multi * raw;
+}
+function groupValue(g, levels, refRank) {
+  const U = (i) => bonusOf(i, levels[i]);
+  if (g === "evo")   return (1 + U(0) * refRank / 100) * (1 + U(3) / 100) * (1 + U(10) / 100) * (1 + U(15) / 100);
+  if (g === "og")    return 1 + (U(7) + U(11) + U(18)) / 100;
+  if (g === "soil")  return (1 + U(2) * refRank / 100) * (1 + (U(6) + U(13)) / 100);
+  if (g === "exp")   return 1 + (U(5) + U(12) + U(16)) / 100;
+  if (g === "value") {
+    const v = R.calc.value;
+    return Math.min(v.cap, Math.round(v.doubler * v.gmo * (1 + (U(8) + U(17)) / 100) * (1 + (U(1) * refRank + v.vote) / 100)));
+  }
+}
+function refRankOf(g) {
+  const avg = Math.round(R.plotRanks.reduce((a, b) => a + b, 0) / Math.max(1, R.plotRanks.length));
+  if (g === "evo") return R.calc.medalPlotRank ?? avg;
+  return avg;
+}
+function objective(levels) {
+  let s = 0;
+  for (const g of Object.keys(GROUPS)) {
+    const w = W[g] ?? 0;
+    if (w > 0) s += w * Math.log(Math.max(1e-12, groupValue(g, levels, refRankOf(g))));
+  }
+  return s;
+}
+function optimize() {
+  const n = R.rankDb.length;
+  const levels = new Array(n).fill(0);
+  let budget = R.rankPtsTotal;
+  if (MODE === "addonly") {
+    for (let i = 0; i < n; i++) levels[i] = R.rankDb[i].level;
+    budget = R.rankPtsTotal - R.rankDb.reduce((t, u) => t + u.level, 0);
+  }
+  const capOf = (i) => SEED_IDS.includes(i) ? R.calc.fifthColMax : Infinity;
+  if (MAX_SEEDS) for (const i of SEED_IDS) {
+    const take = Math.min(Math.max(0, capOf(i) - levels[i]), budget);
+    levels[i] += take; budget -= take;
+  }
+  const groupIds = Object.values(GROUPS).flatMap((g) => g.ids);
+  let cur = objective(levels);
+  for (const chunk of [64, 16, 4, 1]) {
+    while (budget >= chunk) {
+      let best = -1, bestGain = 1e-12;
+      for (const i of groupIds) {
+        if (levels[i] + chunk > capOf(i)) continue;
+        levels[i] += chunk;
+        const gain = objective(levels) - cur;
+        levels[i] -= chunk;
+        if (gain > bestGain) { bestGain = gain; best = i; }
+      }
+      if (best < 0) break;
+      levels[best] += chunk; budget -= chunk; cur = objective(levels);
+    }
+  }
+  return { levels, unspent: budget };
+}
+
+/* ---- UI ---- */
+function renderSetup() {
+  const unspent = R.rankPtsTotal - R.rankDb.reduce((t, u) => t + u.level, 0);
+  $("setupPanel").innerHTML = `
+    <h2>Goal <span class="hint">no hidden ratios — every point goes where it buys the most weighted gain; caps are modeled, so dead points show up as dead</span></h2>
+    <div class="controls">
+      <label>preset <select id="presetSel" class="inlinesel">
+        ${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === PRESET ? "selected" : ""}>${p.label}</option>`).join("")}
+      </select></label>
+      <label><input type="radio" name="mode" value="respec" ${MODE === "respec" ? "checked" : ""}> full respec (${R.rankPtsTotal} pts)</label>
+      <label><input type="radio" name="mode" value="addonly" ${MODE === "addonly" ? "checked" : ""}> only place unspent (${unspent} pts)</label>
+      <label><input type="checkbox" id="seedsChk" ${MAX_SEEDS ? "checked" : ""}> max "Seed of …" stat rows first</label>
+    </div>
+    <div class="weights">
+      ${Object.entries(GROUPS).map(([g, def]) => `
+        <label>${def.label}<output id="wOut_${g}">${W[g]}</output>
+          <input type="range" min="0" max="10" step="1" value="${W[g]}" data-g="${g}"></label>`).join("")}
+    </div>`;
+  $("presetSel").addEventListener("change", (e) => {
+    PRESET = e.target.value; localStorage.setItem("lrPreset", PRESET);
+    if (PRESETS[PRESET].w) W = { ...PRESETS[PRESET].w };
+    renderSetup(); renderResult();
+  });
+  document.querySelectorAll('input[name="mode"]').forEach((r) => r.addEventListener("change", (e) => {
+    MODE = e.target.value; localStorage.setItem("lrMode", MODE); renderResult();
+  }));
+  $("seedsChk").addEventListener("change", (e) => { MAX_SEEDS = e.target.checked; localStorage.setItem("lrSeeds", MAX_SEEDS ? "1" : "0"); renderResult(); });
+  document.querySelectorAll('.weights input[type=range]').forEach((s) => s.addEventListener("input", (e) => {
+    W[e.target.dataset.g] = Number(e.target.value);
+    $("wOut_" + e.target.dataset.g).textContent = e.target.value;
+    PRESET = "custom"; $("presetSel").value = "custom";
+    renderResult();
+  }));
+}
+
+function renderDetail() {
+  if (SELECTED == null || !LAST) { $("lrdetail").innerHTML = "— select a bonus —"; return; }
+  const i = SELECTED, u = R.rankDb[i], rec = LAST.levels[i];
+  $("lrdetail").innerHTML = `
+    <b>${nice(u.name)}</b> — lv ${u.level} → <b>${rec}</b>
+    ${rec !== u.level ? `(<span class="${rec > u.level ? "delta-up" : "delta-dn"}">${rec > u.level ? "+" : ""}${rec - u.level}</span>)` : ""}
+    · bonus ${fmt(bonusOf(i, u.level))}${i % 5 === 4 ? "" : "%"} → <b>${fmt(bonusOf(i, rec))}${i % 5 === 4 ? "" : "%"}</b>
+    <div class="why">${nice(u.desc)}${SEED_IDS.includes(i) ? ` · max lv ${R.calc.fifthColMax}` : ""}</div>`;
+}
+
+function renderResult() {
+  LAST = optimize();
+  const { levels, unspent } = LAST;
+  const curLevels = R.rankDb.map((u) => u.level);
+  const groups = Object.keys(GROUPS).map((g) => {
+    const before = groupValue(g, curLevels, refRankOf(g));
+    const after = groupValue(g, levels, refRankOf(g));
+    return { g, label: GROUPS[g].label, before, after, ratio: after / before };
+  });
+
+  $("tiles").innerHTML = groups.map((x) => `
+    <div class="tile"><div class="label">${x.label}</div>
+      <div class="value">${x.ratio > 1.0005 ? `<span class="delta-up">×${x.ratio.toFixed(2)}</span>` : x.ratio < 0.9995 ? `<span class="delta-dn">×${x.ratio.toFixed(2)}</span>` : "="}</div>
+      <div class="sub">${fmt(x.before)}${x.g === "value" ? "" : "×"} → ${fmt(x.after)}${x.g === "value" ? "" : "×"}</div></div>`).join("")
+    + `<div class="tile"><div class="label">Points</div><div class="value">${R.rankPtsTotal - unspent}<span class="of">/${R.rankPtsTotal}</span></div>
+      <div class="sub">${unspent ? unspent + " unplaceable (caps)" : MODE === "respec" ? "full respec" : "unspent placed"}</div></div>`;
+
+  /* the board: 4 rows x 5 cols, row-major — 5th column = the Seed rows, like in-game */
+  $("boardPanel").style.visibility = "";
+  $("lrgrid").innerHTML = R.rankDb.map((u, i) => {
+    const rec = levels[i], d = rec - u.level;
+    return `<div class="lrslot ${i % 5 === 4 ? "seedcol" : ""} ${SELECTED === i ? "sel" : ""}" data-i="${i}" title="${nice(u.name)}">
+      ${d !== 0 ? `<span class="badge ${d > 0 ? "delta-up" : "delta-dn"}">${d > 0 ? "+" : ""}${d}</span>` : ""}
+      <div class="orb">${rec}<span class="now">${d !== 0 ? "now " + u.level : "&nbsp;"}</span></div>
+      <div class="lv">lv ${rec}</div>
+    </div>`;
+  }).join("");
+  document.querySelectorAll(".lrslot").forEach((s) => s.addEventListener("click", () => {
+    SELECTED = Number(s.dataset.i);
+    document.querySelectorAll(".lrslot").forEach((x) => x.classList.toggle("sel", Number(x.dataset.i) === SELECTED));
+    renderDetail();
+  }));
+  renderDetail();
+
+  const capped = groups.find((x) => x.g === "value" && x.after >= R.calc.value.cap);
+  $("capnote").innerHTML = capped ? `<div class="capnote">Crop value sits at its ${fmt(R.calc.value.cap)}× cap — further Production points are DEAD (raise the cap with Stalk Value exotics first).</div>` : "";
+
+  $("tableWrap").innerHTML = `
+    <div class="scroll"><table>
+      <tr><th>Upgrade</th><th style="text-align:right">Now</th><th style="text-align:right">Recommended</th><th style="text-align:right">Δ</th><th style="text-align:right">Bonus at rec.</th><th class="note">Effect</th></tr>
+      ${R.rankDb.map((u, i) => {
+        const d = levels[i] - u.level;
+        return `<tr class="${levels[i] === 0 && u.level === 0 ? "dim" : ""}">
+          <td><b>${nice(u.name)}</b></td>
+          <td style="text-align:right">${u.level}</td>
+          <td style="text-align:right"><b>${levels[i]}</b></td>
+          <td style="text-align:right">${d > 0 ? `<span class="delta-up">+${d}</span>` : d < 0 ? `<span class="delta-dn">${d}</span>` : "·"}</td>
+          <td style="text-align:right">${fmt(bonusOf(i, levels[i]))}${i % 5 === 4 ? "" : "%"}</td>
+          <td class="note">${nice(u.desc)}</td>
+        </tr>`;
+      }).join("")}
+    </table></div>`;
+
+  $("legend").innerHTML = `Client formulas (hyperbolic 1.7·base·L/(L+80); Seed rows linear; all ×${R.calc.multi.toFixed(2)} Dank Ranks + Plump Database). Per-rank rows use each plot's OWN rank (evolution uses your medal plot's rank ${R.calc.medalPlotRank ?? "—"}). Rank XP chains off the PREVIOUS plot — rank plots in order. A Rank-Exp-heavy build grows points faster; respec into the payoff build when needed (one respec banks per weekly reset).`;
+}
+
+async function boot() {
+  try {
+    const res = await fetch("/api/farming");
+    const j = await res.json();
+    if (!j.ok || !j.report) { $("err").textContent = "No snapshot with a stored raw save yet — Sync first."; return; }
+    R = {
+      rankDb: j.report.markets.rankDb,
+      rankPtsTotal: j.report.markets.rankPtsTotal,
+      plotRanks: j.report.markets.plotRanks,
+      calc: j.report.markets.rankCalcCtx,
+    };
+    $("meta").textContent = "synced " + new Date(j.ts).toLocaleString();
+    W = { ...(PRESETS[PRESET].w ?? PRESETS.evo.w) };
+    renderSetup();
+    renderResult();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

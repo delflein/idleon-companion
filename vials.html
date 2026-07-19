@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vials &amp; Sigils — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/aVials1.png" alt="" width="26" height="26">Vials &amp; Sigils</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="vialsPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w2 static glossary
+let W2 = null;      // SNAP.entities.w2 shortcut
+
+const TIER_NAMES = ["Locked", "Unlocked", "Boost", "Jade", "Ethereal", "Eclectic"]; // tier -1..4, shifted +1
+const VIAL_MAX_LEVEL = 13; // gamedata-w2-vials.mjs: AlchemyVialQTYreq has 14 entries (levels 0-13)
+
+/* ---------- module state ---------- */
+let VIAL_SHOWALL = false;
+let SIGIL_SHOWALL = false;
+
+/* ---------- generic helpers (same as w2.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+const niceItem = (s) => String(s ?? "")
+  .replace(/_/g, " ")
+  .replace(/([a-z])([A-Z])/g, "$1 $2")
+  .replace(/([A-Za-z])(\d)/g, "$1 $2")
+  .trim();
+
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+/* ============================================================================================
+ * Top KPI strip (Vials + Sigils slice of w2.html's renderTiles).
+ * ============================================================================================ */
+function renderTiles() {
+  const sigilsUnlocked = W2.sigils.filter((s) => s.tier >= 0).length;
+
+  const tiles = [
+    ["aVials1|data", "Vials leveled", `${W2.vials.length}<span class="of">/86</span>`, "up to level 13 each"],
+    ["SigilSyrup|data", "Sigils unlocked", `${sigilsUnlocked}<span class="of">/24</span>`, "tier Unlocked or higher"],
+  ];
+  $("tiles").innerHTML = tiles.map(([ic, l, v, sub]) => {
+    const [f, d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
+}
+
+/* ============================================================================================
+ * MODULE — Vials + Sigils.
+ * ============================================================================================ */
+function vialRowHtml(v, gloss) {
+  const g = gloss.get(v.idx);
+  const pct = Math.max(0, Math.min(100, (v.level / VIAL_MAX_LEVEL) * 100));
+  return `<tr>
+    <td><b>${niceItem(v.name)}</b></td>
+    <td>Lv ${v.level}<span class="of">/${VIAL_MAX_LEVEL}</span>
+      <div class="bar-bg" style="margin-top:3px"><div class="bar-fill" style="width:${pct}%"></div></div></td>
+    <td style="text-align:right">${v.bonus ? "+" + fmt(v.bonus) : "—"}</td>
+    <td class="note">${g ? g.desc : ""}</td>
+    <td>${chip(v.status)}</td>
+  </tr>`;
+}
+
+function nextSigilCost(tier, g) {
+  if (!g) return null;
+  if (tier < 0) return { name: "Unlocked", cost: g.unlockCost };
+  if (tier === 0) return { name: "Boost", cost: g.boostCost };
+  if (tier === 1) return { name: "Jade", cost: g.jadeCost };
+  if (tier === 2) return { name: "Ethereal", cost: g.etherealCost };
+  if (tier === 3) return { name: "Eclectic", cost: g.eclecticCost };
+  return null; // tier 4 = maxed
+}
+
+function sigilRowHtml(s, gloss) {
+  const g = gloss.get(s.idx);
+  const tierChip = s.tier < 0 ? "dead" : s.tier >= 4 ? "live" : s.tier >= 2 ? "user" : "";
+  const next = nextSigilCost(s.tier, g);
+  const progressHtml = next
+    ? `${fmt(s.progress)}<span class="of">/${fmt(next.cost)}</span> → ${next.name}
+       <div class="bar-bg" style="margin-top:3px"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, (s.progress / next.cost) * 100))}%"></div></div>`
+    : `<span class="note">maxed</span>`;
+  return `<tr>
+    <td><b>${niceItem(s.name)}</b></td>
+    <td><span class="chip ${tierChip}">${s.tierName}</span></td>
+    <td style="text-align:right">${s.tier >= 0 ? "+" + fmt(s.bonus) : "—"}</td>
+    <td>${progressHtml}</td>
+    <td class="note">${g ? g.effect : ""}</td>
+    <td>${chip(s.status)}</td>
+  </tr>`;
+}
+
+function renderVialsSigils() {
+  const vialsAll = W2.vials.slice().sort((a, b) => b.level - a.level);
+  const vialGloss = new Map((GLOSS?.vialEffects || []).map((v) => [v.idx, v]));
+  const vShowAll = VIAL_SHOWALL;
+  const vRows = vShowAll ? vialsAll : vialsAll.slice(0, 12);
+
+  const sigilsAll = W2.sigils.slice().sort((a, b) => (b.tier - a.tier) || (b.progress - a.progress));
+  const sigilGloss = new Map((GLOSS?.sigilEffects || []).map((s) => [s.idx, s]));
+  const sShowAll = SIGIL_SHOWALL;
+  const sRows = sShowAll ? sigilsAll : sigilsAll.slice(0, 12);
+
+  $("vialsPanel").style.display = "";
+  $("vialsPanel").innerHTML = `
+    <h2>Vials &amp; Sigils <span class="hint">Vials: material-only levels, no RNG once unlocked (13 levels). Sigils: a charge meter that fills over time and unlocks progressively higher tiers.</span></h2>
+    <h2 class="subhead">Vials <span class="of">${W2.vials.length}/86 unlocked</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Vial</th><th>Level</th><th style="text-align:right">Bonus</th><th>Effect</th><th>Status</th></tr>
+      ${vRows.map((v) => vialRowHtml(v, vialGloss)).join("")}
+    </table></div>
+    ${vialsAll.length > 12 ? `<button class="showmore" id="vialShowMore">${vShowAll ? "show fewer" : `show ${vialsAll.length - 12} more`}</button>` : ""}
+
+    <h2 class="subhead" style="margin-top:16px">Sigils <span class="of">${W2.sigils.filter((s) => s.tier >= 0).length}/24 unlocked</span>
+      <span class="tip" title="Sigils unlock and then upgrade through 5 tiers (Unlocked → Boost → Jade → Ethereal → Eclectic) as a charge meter fills — Jade/Ethereal/Eclectic each additionally require a one-time gate elsewhere (Ninja Emporium, Spelunking lore, Lab research).">ⓘ</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Sigil</th><th>Tier</th><th style="text-align:right">Bonus</th><th>Progress</th><th>Effect</th><th>Status</th></tr>
+      ${sRows.map((s) => sigilRowHtml(s, sigilGloss)).join("")}
+    </table></div>
+    ${sigilsAll.length > 12 ? `<button class="showmore" id="sigilShowMore">${sShowAll ? "show fewer" : `show ${sigilsAll.length - 12} more`}</button>` : ""}
+  `;
+  wireVialsSigils();
+}
+
+function wireVialsSigils() {
+  const vm = $("vialShowMore");
+  if (vm) vm.onclick = () => { VIAL_SHOWALL = !VIAL_SHOWALL; renderVialsSigils(); };
+  const sm = $("sigilShowMore");
+  if (sm) sm.onclick = () => { SIGIL_SHOWALL = !SIGIL_SHOWALL; renderVialsSigils(); };
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w2) {
+      $("err").innerHTML = `No <code>w2</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W2 = SNAP.entities.w2;
+
+    const glossRes = await fetch("/api/w2");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderVialsSigils();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

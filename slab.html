@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slab — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html — the generic recipe-breakdown renderer's own look (this page only
+   * needs the table/note bits, not the expander machinery). */
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .rewardladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .rewardladder span { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .rewardladder span.got { border-color: rgba(12,163,12,.5); color: var(--good); }
+  .rewardladder span.next { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Slab.png" alt="" width="26" height="26">The Slab</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="slabPanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null;    // /api/state snapshot
+let GLOSS = null;   // /api/w5 static glossary
+let W5 = null;      // SNAP.entities.w5 shortcut
+
+/* ---------- generic helpers (same as w1-w5.html) ---------- */
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+/* Entity text already has "_" -> " " (domain.mjs); this strips the N.js value-placeholder
+ * punctuation ("{", "}", "#", etc.) that domain.mjs leaves untouched. */
+const stripPh = (s) => String(s ?? "").replace(/[{}<>$@#]/g, "").replace(/\s+/g, " ").trim();
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const s = W5.slab;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Slab", 28, "etc")}<div class="label">Slab completion</div><div class="value">${s.pct}%</div><div class="sub">${fmt(s.looted)}/${fmt(s.total)} items</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * MODULE 4 — Slab: looted/total progress, Slab-of-Legend tiers, greenstacks, the 8 bonus hooks.
+ * ============================================================================================ */
+function slabBonusRowHtml(b) {
+  return `<tr>
+    <td><b>${b.name}</b></td>
+    <td class="note">${stripPh(b.stat)}</td>
+    <td style="text-align:right">${b.steps} step${b.steps === 1 ? "" : "s"}</td>
+    <td style="text-align:right">${b.nextThresholdItems > 0 ? `${fmt(b.nextThresholdItems)} more items` : "at next step"}</td>
+  </tr>`;
+}
+
+function renderSlab() {
+  const s = W5.slab;
+  const nextTier = s.legendTiers.find((t) => !t.done);
+  const tierChips = s.legendTiers.map((t) =>
+    `<span class="${t.done ? "got" : (!nextTier || t.tier !== nextTier.tier) ? "" : "next"}" title="Tier ${t.tier}: ${fmt(t.threshold)} items">T${t.tier}</span>`).join("");
+
+  $("slabPanel").style.display = "";
+  $("slabPanel").innerHTML = `
+    <h2>${UI.sprite("Slab", 20, "etc")} The Slab <span class="hint">A lifetime "have you ever owned this item" tracker across ${fmt(s.total)} items — 8 small bonuses unlock in steps as your count climbs.
+      <span class="tip" title="The Slab counts DISTINCT items you've ever owned (Cards[1], deduped against the 1911-item registry) — it never decreases. Greenstacks is a SEPARATE counter: an inventory SLOT currently holding 10,000,000+ of one item. They can move independently — clearing a green stack doesn't undo Slab progress, and a fresh green stack doesn't require a new Slab item.">ⓘ</span></span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite("Slab", 28, "etc")}<div class="label">Slab completion</div><div class="value">${s.pct}%</div><div class="sub">${fmt(s.looted)}/${fmt(s.total)} items</div></div>
+      <div class="tile"><div class="label">Green stacks</div><div class="value">${fmt(s.greenstacks)}</div><div class="sub">10M+ in one slot, right now</div></div>
+      <div class="tile"><div class="label">Jars</div><div class="value">${fmt(s.jars)}</div><div class="sub">Cavern collectibles found</div></div>
+    </div>
+    <div class="bar-bg" style="margin-bottom:4px"><div class="bar-fill" style="width:${s.pct}%"></div></div>
+    <div class="rewardladder">${tierChips}</div>
+    <p class="note" style="margin:6px 0 0">Slab-of-Legend achievement ladder — max tier only needs ${fmt(s.legendTiers[s.legendTiers.length - 1]?.threshold)}/${fmt(s.total)} items (~${Math.round(100 * s.legendTiers[s.legendTiers.length - 1]?.threshold / s.total)}%), not full completion.</p>
+    <h2 class="subhead" style="margin-top:14px">Bonus hooks <span class="of">step up every N items past a threshold</span></h2>
+    <div class="scroll"><table><tr><th>Bonus</th><th>Stat</th><th style="text-align:right">Steps active</th><th style="text-align:right">Next step</th></tr>${s.bonuses.map(slabBonusRowHtml).join("")}</table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w5) {
+      $("err").innerHTML = `No <code>w5</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    W5 = SNAP.entities.w5;
+
+    const glossRes = await fetch("/api/w5");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderSlab();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

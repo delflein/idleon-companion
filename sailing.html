@@ -4,87 +4,32 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sailing — IdleOn Companion</title>
-<style>
-  :root {
-    color-scheme: dark;
-    --surface-1: #1a1a19; --page: #0d0d0d;
-    --ink-1: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
-    --grid: #2c2c2a; --baseline: #383835;
-    --border: rgba(255,255,255,0.10);
-    --series-1: #3987e5; --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
-  }
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --surface-1: #fcfcfb; --page: #f9f9f7;
-    --ink-1: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
-    --grid: #e1e0d9; --baseline: #c3c2b7;
-    --border: rgba(11,11,11,0.10);
-    --series-1: #2a78d6;
-  }
-  * { box-sizing: border-box; margin: 0; }
-  body {
-    background: var(--page); color: var(--ink-1);
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-size: 14px; line-height: 1.45; padding: 20px; max-width: 1240px; margin: 0 auto;
-  }
-  header { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
-  header h1 { font-size: 21px; font-weight: 650; }
-  header .meta { color: var(--ink-muted); font-size: 12.5px; }
-  header .spacer { flex:1; }
-  nav.pages { display:flex; gap:2px; border:1px solid var(--border); border-radius:10px; padding:2px; }
-  nav.pages a { color:var(--ink-2); text-decoration:none; font-size:12.5px; padding:4px 12px; border-radius:8px; }
-  nav.pages a.here { background:var(--series-1); color:#fff; }
-  nav.pages a:hover:not(.here) { background:var(--grid); }
-  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap:10px; margin-bottom:14px; }
-  .tile { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:12px 14px; }
-  .tile .label { color: var(--ink-muted); font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; }
-  .tile .value { font-size:24px; font-weight:650; margin-top:2px; }
-  .tile .sub { color: var(--ink-2); font-size:12px; margin-top:2px; }
-  section.panel { background: var(--surface-1); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:14px; }
-  section.panel h2 { font-size:14.5px; font-weight:650; margin-bottom:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  section.panel h2 .hint { font-weight:400; color:var(--ink-muted); font-size:11.5px; }
-  table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; font-size:12.5px; }
-  th { text-align:left; color:var(--ink-muted); font-weight:500; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; padding:0 8px 6px 0; white-space:nowrap; }
-  th.sortable { cursor:pointer; user-select:none; }
-  th.sortable:hover { color:var(--ink-1); }
-  td { padding:5px 8px 5px 0; border-top:1px solid var(--grid); white-space:nowrap; }
-  tr.dim td { color:var(--ink-muted); }
-  tr.pick td { background:rgba(57,135,229,.09); }
-  .chip { font-size:11px; border:1px solid var(--border); border-radius:6px; padding:1px 6px; color:var(--ink-2); }
-  .chip.dead { color:var(--ink-muted); text-decoration:line-through; opacity:.6; }
-  .chip.live { border-color:var(--good); color:var(--good); }
-  .chip.soon { border-color:var(--warning); color:var(--warning); }
-  .rec { border-left:3px solid var(--series-1); padding:3px 0 3px 11px; margin:2px 0 10px; font-size:13px; }
-  .rec.none { border-left-color:var(--baseline); color:var(--ink-muted); }
-  .rec b { color:var(--ink-1); }
-  select { background:var(--page); color:var(--ink-1); border:1px solid var(--border); border-radius:7px; padding:3px 8px; font:inherit; font-size:12.5px; }
-  .err { color:var(--critical); }
-  .scroll { overflow-x:auto; }
-  .caveat { border-left:3px solid var(--warning); background:rgba(250,178,25,.06); padding:8px 11px; border-radius:0 8px 8px 0; margin-bottom:14px; font-size:12.5px; color:var(--ink-2); }
-  .caveat:empty { display:none; }
-  .caveat code { color:var(--ink-1); font-size:11.5px; }
-  .up { color:var(--good); } .down { color:var(--ink-muted); }
-</style>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>#caveat:empty { display:none; }</style>
 </head>
 <body>
-<header>
-  <h1>Sailing</h1>
-  <nav class="pages">
-    <a href="dashboard.html">Dashboard</a>
-    <a href="achievements.html">Achievements</a>
-    <a class="here" href="sailing.html">Sailing</a>
-  </nav>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Sailing_Skill_0.png" alt="" width="26" height="26">Sailing</h1>
+  <nav class="pages"></nav>
   <span class="spacer"></span>
   <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
 </header>
 
 <div id="err" class="err"></div>
-<div id="caveat" class="caveat"></div>
-<div class="cards" id="tiles"></div>
-<section class="panel" id="islandPanel" style="display:none"></section>
+<section class="attention" id="tipsBand" style="display:none">
+  <h2 class="bandtitle" id="tipsTitle">Quick tips</h2>
+  <div class="att-grid" id="tips"></div>
+</section>
+<div class="kpis five" id="tiles"></div>
+<div class="grid2" style="margin-bottom:var(--gap)">
+  <section class="panel" id="leversPanel" style="display:none"></section>
+  <section class="panel" id="islandPanel" style="display:none"></section>
+</div>
 <section class="panel" id="shopPanel" style="display:none"></section>
 <section class="panel" id="fleetPanel" style="display:none"></section>
-<section class="panel" id="sourcePanel" style="display:none"></section>
+<div id="caveat" class="foot caveat-line"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -101,6 +46,7 @@ const CHEST = [
   {name:"Occult",  arti:3.8416},{name:"Miracle", arti:30},
 ];
 const STAT = ["Boat Speed","Loot Value","Cloud Discover","Artifact Find","Rare Chest"];
+const TIERB = ["","I","II","III","IV","V","VI"];
 
 /* Stat value is phase-dependent, not fixed. The old community ranking
  * (Boat Speed > Loot Value > Artifact Find > Rare Chest > Cloud) predates Transcended
@@ -147,7 +93,7 @@ const boatRate = (s, b, isl) =>
 function render() {
   const s = SNAP.entities?.sailing;
   if (!s) { $("err").innerHTML = `No <code>sailing</code> entity — run <b>POST /api/rebuild</b>, then reload.`; return; }
-  /* s.baseMulti now arrives COMPUTED from domain.mjs (artifactchance.mjs evaluates the client's
+  /* s.baseMulti now arrives COMPUTED from domain.mjs (stats/artifact-find.mjs evaluates the client’s
    * ~28-term BoatArtiMulti against the save). It used to be hardcoded to one account's in-game
    * reading, which was wrong for everybody else. Older snapshots predate the field — rebuild
    * rather than silently falling back to a constant. */
@@ -161,51 +107,29 @@ function render() {
   const live = s.islands.filter(i => i.unmaxed > 0);
   const fleetOn = (isl) => s.boats.reduce((t,b) => t + boatRate(s,b,isl), 0);
 
-  const fmtMulti = (v) => v >= 1e6 ? (v/1e6).toFixed(2)+"M×" : Math.round(v).toLocaleString()+"×";
+  const fmtMulti = (v) => v >= 1e9 ? (v/1e9).toFixed(2)+"B×" : v >= 1e6 ? (v/1e6).toFixed(2)+"M×" : Math.round(v).toLocaleString()+"×";
+  const of = (a,b) => `${a} <span class="of">/ ${b}</span>`;
   $("tiles").innerHTML = [
-    ["Banked sailing", s.bankedHours.toFixed(2)+" h", "advances every boat on claim"],
-    ["Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "waiting"],
-    ["Artifacts maxed", s.artifactsMaxed+" / "+(s.artifactsMaxed+s.artifactsRemaining), s.artifactsRemaining+" to go"],
-    ["Rare Chest boats", s.boatsWithRareChest+" / "+s.boats.length, s.boatsDeadForArtifacts+" dead for artifacts"],
-    ["Artifact find", (s.artiLowerBound?"≥ ":"")+fmtMulti(s.baseMulti),
-      s.artiLowerBound ? `${s.artiUnknown.length} term(s) unknown — real value is higher` : "computed from save"],
-  ].map(([l,v,sub]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
+    ["Sailing_Skill_0|etc", "Banked sailing", s.bankedHours.toFixed(1)+" h", "advances every boat on claim"],
+    ["SailChest0|data", "Chest pile", s.chests, s.chests===0 ? "empty — boats at sea" : "waiting"],
+    ["Arti28|data", "Artifacts maxed", of(s.artifactsMaxed, s.artifactsMaxed+s.artifactsRemaining), s.artifactsRemaining+" to go"],
+    ["SailChest4|data", "Rare Chest boats", of(s.boatsWithRareChest, s.boats.length), s.boatsDeadForArtifacts+" dead for artifacts"],
+    ["Arti0|data", "Artifact find", (s.artiLowerBound?"≥ ":"")+fmtMulti(s.baseMulti),
+      `<a href="stats.html?recipe=artifactFind">full breakdown →</a>`],
+  ].map(([ic,l,v,sub]) => {
+    const [f,d] = ic.split("|");
+    return `<div class="tile">${UI.sprite(f, 28, d)}<div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`;
+  }).join("");
 
   /* The absolute "1 in X" numbers below inherit two things the save cannot tell us: the
    * calibrated Firebase server vars, and any BoatArtiMulti term we could not compute. Ratios
    * between islands/boats/captains are unaffected. Say so instead of implying false precision. */
   $("caveat").innerHTML = s.artiLowerBound
-    ? `<b>The "1 in N" columns are a FLOOR, not a value — and possibly a distant one.</b>
-       ${s.artiUnknown.length} artifact-find term(s) can't be derived from the save
-       (${s.artiUnknown.slice(0,3).map(u=>`<code>${u.split(" —")[0].split(" [")[0]}</code>`).join(", ")}${s.artiUnknown.length>3?", …":""}),
-       so each contributes its neutral value and your real chance is <b>better than shown</b> —
-       on a maxed account by as much as ~50×. The island divisors also depend on Firebase server
-       vars that are calibrated, not read. <b>Rankings and × comparisons are unaffected</b>
-       (every missing term is a global multiplier and cancels out of a ratio) —
-       <b>trust those, not the absolute odds.</b>`
+    ? `<b>The "1 in N" columns are a floor</b> — ${s.artiUnknown.length} artifact-find
+       source(s) can't be derived from the save, so your real chance is better than shown.
+       Rankings and × comparisons are unaffected. Details:
+       <a href="stats.html?recipe=artifactFind" style="color:var(--series-1)">Stats → Artifact Find Chance</a>.`
     : "";
-
-  /* islands */
-  const best = [...live].sort((a,b)=> fleetOn(b)-fleetOn(a))[0];
-  $("islandPanel").style.display = "";
-  $("islandPanel").innerHTML = `
-    <h2>Islands <span class="hint">rolls per chest × divisor</span></h2>
-    ${best && best.i !== cur.i
-      ? `<div class="rec">Move all boats to <b>island ${best.i}</b> — <b class="up">${(fleetOn(best)/fleetOn(cur)).toFixed(2)}×</b> your rate on island ${cur.i}.</div>`
-      : `<div class="rec none">Island ${cur.i} is already your best.</div>`}
-    <div class="scroll"><table>
-      <tr><th>island</th><th>un-maxed</th><th>basic chest</th><th>vs current</th><th>artifacts</th></tr>
-      ${live.map(i=>{
-        const rel = fleetOn(i)/fleetOn(cur);
-        return `<tr class="${i.i===cur.i?"pick":(rel<1?"dim":"")}">
-          <td>${i.i}${i.i===cur.i?" ·":""}</td>
-          <td>${i.unmaxed} / ${i.count}</td>
-          <td>${oneIn(chanceFor(s.baseMulti, i))}</td>
-          <td class="${rel>1?"up":"down"}">${rel.toFixed(2)}×</td>
-          <td>${i.artifacts.filter(a=>a.tier<6).map(a=>`<span class="chip">${a.name}</span>`).join(" ")}</td>
-        </tr>`;
-      }).join("")}
-    </table></div>`;
 
   /* Shop captains arrive at level 1, and effect = level × storedRoll. Scoring them as they
    * stand ranks every roll at its worst moment and buries good ones. The stored roll never
@@ -228,13 +152,73 @@ function render() {
   swaps.sort((a,b)=> b.late - a.late);     // judge the roll, not its current level
   const top = swaps[0];
   const fleetNow = fleetOn(sel);
+  const pctOf = (x) => (x>=0?"+":"")+(x/fleetNow*100).toFixed(2)+"%";
+
+  /* quick tips — the three decisions that matter this phase */
+  const best = [...live].sort((a,b)=> fleetOn(b)-fleetOn(a))[0];
+  $("tipsTitle").textContent = "Quick tips — " + s.phase + " phase";
+  $("tipsBand").style.display = "";
+  $("tips").innerHTML = [
+    top && top.late > 0 ? {
+      icon: "Captain_3|etc",
+      t: `Buy the tier ${top.c.tier} shop roll`,
+      why: `${top.c.stats.filter(x=>LIVE[s.phase].includes(x.id)).map(x=>STAT[x.id]+" +"+x.raw).join(", ")||"—"} — replaces captain ${capLabel(top.b.captainIdx)} on boat ${top.b.i}.`,
+      act: `<b class="${top.now>=0?"up":"down"}">${pctOf(top.now)}</b> now → <b class="up">${pctOf(top.late)}</b> at lv ${CAP_LV}. The roll never changes; the level does.`,
+    } : {
+      icon: "Captain_3|etc",
+      t: "Captain shop: nothing worth buying",
+      why: "No roll beats a captain you already have, even levelled to " + CAP_LV + ".",
+      act: "Check back after the shop rerolls.",
+    },
+    best ? (best.i !== cur.i ? {
+      icon: `SailT${best.i*2+1}|data`,
+      t: `Move the fleet to island ${best.i}`,
+      why: `${(fleetOn(best)/fleetOn(cur)).toFixed(2)}× your current rate on island ${cur.i}.`,
+      act: `${live.length} islands still hold un-maxed artifacts (${live.map(i=>i.i).join(", ")}).`,
+    } : {
+      icon: `SailT${cur.i*2+1}|data`,
+      t: `Island ${cur.i} is already your best`,
+      why: `Highest fleet rate of all ${live.length} live islands — nothing to change.`,
+      act: `${live.length} islands still hold un-maxed artifacts (${live.map(i=>i.i).join(", ")}).`,
+    }) : null,
+    s.boatsDeadForArtifacts > 0 ? {
+      icon: "SailChest5|data",
+      t: `${s.boatsDeadForArtifacts} boats are dead for artifacts`,
+      why: `Only ${s.boatsWithRareChest}/${s.boats.length} boats carry a Rare Chest captain — the live stat this phase.`,
+      act: "Re-roll or re-assign the speed/loot captains; Cloud Discover is never worth a slot.",
+    } : null,
+  ].filter(Boolean).map((c,i)=>{
+    const [f,d] = c.icon.split("|");
+    return `<div class="att-card"><div class="rank">${i+1}</div>${UI.sprite(f, 34, d, "att-sprite")}
+      <div class="att-body"><h3>${c.t}</h3><p class="why">${c.why}</p><p class="act">${c.act}</p></div></div>`;
+  }).join("");
+
+  /* islands */
+  $("islandPanel").style.display = "";
+  $("islandPanel").innerHTML = `
+    <h2>Islands <span class="hint">chance per basic chest · fleet on island ${cur.i}</span></h2>
+    <div class="scroll"><table>
+      <tr><th>island</th><th>un-maxed</th><th>basic chest</th><th class="num">vs current</th><th>artifacts</th></tr>
+      ${live.map(i=>{
+        const rel = fleetOn(i)/fleetOn(cur);
+        return `<tr class="${i.i===cur.i?"pick":(rel<1?"dim":"")}">
+          <td class="isl">${UI.sprite("SailT"+(i.i*2+1), 22)} ${i.i}${i.i===cur.i?" · fleet":""}</td>
+          <td>${i.unmaxed} / ${i.count}</td>
+          <td>${oneIn(chanceFor(s.baseMulti, i))}</td>
+          <td class="num ${rel>=1?"up":"down"}">${rel.toFixed(2)}×</td>
+          <td>${i.artifacts.filter(a=>a.tier<6).map(a=>
+            `<span class="artchip" title="${a.name} (tier ${a.tier})">${UI.sprite("Arti"+a.i, 20)}<span class="tb">${TIERB[a.tier]||a.tier}</span></span>`).join(" ")}</td>
+        </tr>`;
+      }).join("")}
+    </table></div>`;
+
   $("shopPanel").style.display = "";
   $("shopPanel").innerHTML = `
     <h2>Captain shop</h2>
     ${top && top.late > 0
       ? `<div class="rec">Buy the <b>tier ${top.c.tier}</b> roll (${top.c.stats.filter(x=>LIVE[s.phase].includes(x.id)).map(x=>STAT[x.id]+" +"+x.raw).join(", ")||"—"})
          and replace <b>captain ${capLabel(top.b.captainIdx)} on boat ${top.b.i}</b> —
-         <b class="${top.now>=0?"up":"down"}">${top.now>=0?"+":""}${(top.now/fleetNow*100).toFixed(2)}%</b> now,
+         <b class="${top.now>=0?"up":"down"}">${pctOf(top.now)}</b> now,
          <b class="up">+${(top.late/fleetNow*100).toFixed(2)}%</b> at lv${CAP_LV}.</div>`
       : `<div class="rec none">Nothing worth buying — no roll beats a captain you already have, even levelled.</div>`}
     <div class="scroll"><table>
@@ -300,79 +284,6 @@ function render() {
       render();
     };
   }
-
-  renderSources(s);
-}
-
-/* Every source feeding BoatArtiMulti, straight from artifactchance.mjs's per-term breakdown.
- * Two groups because the client's expression has two shapes: one additive bracket
- * (1 + sum(add)/100) multiplied by a chain of independent factors. Sorted by impact, so the
- * top row is genuinely where your artifact chance comes from — and the bottom rows are where
- * there's headroom left.
- * Status is shown per row rather than summarised: `unknown` terms sit at their neutral element,
- * so a floor is visible as a floor instead of being asserted in a footnote nobody reads. */
-/* Friendly names for terms whose key is a bare client expression. Only names I can actually
- * justify are here — anything not in this map falls back to showing the raw expression, which
- * is ugly but true. Do not invent a label to fill a gap; a wrong name is worse than a formula. */
-const SRC_NAME = [
-  [/WinBonus/,             "Summoning · winner bonus"],
-  [/DaveyJonesBonus/,      "Davey Jones · gem shop"],
-  [/Spelunk\[6\]/,         "Spelunking discoveries · 1.02^n"],
-  [/PaletteBonus/,         "Gaming · palette"],
-  [/PurpleChestSlugsOwned/,"Purple Chest Slug · 1.5^owned"],
-  [/Button_Bonuses/,       "The Button"],
-  [/KillroyBonuses/,       "Killroy · skull shop"],
-  [/VotingBonusz/,         "Summoning · active vote"],
-  [/LoreEpiBon/,           "Lore episode"],
-  [/RoG_BonusQTY/,         "Sushi"],
-  [/ExoticBonusQTY/,       "Farming · exotic"],
-  [/Companions\(154\)/,    "Companion 154"],
-  [/Companions\(43\)/,     "Companion 43"],
-  [/VaultUpgBonus/,        "Summoning · vault upgrade"],
-  [/StickerBonus/,         "Sticker"],
-  [/NONdummies\[60\]/,     "Tier-6 captains"],
-  [/ShinyBonusS/,          "Shiny pets"],
-  [/GetBribeBonus/,        "Bribe · Artifact Pilfering"],
-  [/FractalIslandBonus/,   "Fractal Island"],
-  [/CaptBonusCalc/,        "This boat's captain"],
-  [/Grid_Bonus\",109/,     "Research grid · Transcendent Artifacts"],
-];
-const srcLabel = (key) => {
-  for (const [re, name] of SRC_NAME) if (re.test(key)) return name;
-  // several keys already carry a trailing human name, e.g. `Sailing(...) Fauxory Tusk`
-  const m = key.match(/\)\s+([A-Z][\w' ]+)$/);
-  return m ? m[1] : key;
-};
-
-function renderSources(s) {
-  const terms = s.artiTerms || [];
-  if (!terms.length) return;
-  const add = terms.filter(t => t.kind === "add");
-  const mul = terms.filter(t => t.kind === "mul");
-  const pool = add.reduce((t, x) => t + (x.value || 0), 0);
-
-  const tag = (t) => t.status === "computed" ? ""
-    : `<span class="chip ${t.status === "partial" ? "soon" : "dead"}">${t.status}</span>`;
-  const row = (t, fmtV) => `<tr class="${t.status === "unknown" ? "dim" : ""}">
-      <td><b>${srcLabel(t.key)}</b><div style="color:var(--ink-muted);font-size:10.5px">${t.key}</div></td>
-      <td style="text-align:right;vertical-align:top">${fmtV(t)}</td>
-      <td style="vertical-align:top">${tag(t)}</td>
-      <td style="color:var(--ink-2);white-space:normal;vertical-align:top">${t.note || ""}</td>
-    </tr>`;
-
-  $("sourcePanel").style.display = "";
-  $("sourcePanel").innerHTML = `
-    <h2>Artifact find chance sources
-      <span class="hint">${s.artiLowerBound ? "≥ " : ""}${fmtMulti(s.baseMulti)} total · ${terms.length} terms</span>
-    </h2>
-    <div class="scroll"><table>
-      <tr><th colspan="4">Additive pool → ×${(1 + pool/100).toFixed(2)} &nbsp;<span style="text-transform:none;font-weight:400">(1 + ${Math.round(pool).toLocaleString()}% / 100)</span></th></tr>
-      ${[...add].sort((a,b)=>(b.value||0)-(a.value||0)).map(t => row(t, x => "+" + Math.round(x.value||0).toLocaleString() + "%")).join("")}
-    </table></div>
-    <div class="scroll" style="margin-top:14px"><table>
-      <tr><th colspan="4">Multiplicative</th></tr>
-      ${[...mul].sort((a,b)=>(b.value||1)-(a.value||1)).map(t => row(t, x => "×" + (+(x.value||1)).toFixed(2))).join("")}
-    </table></div>`;
 }
 
 /* mirrors domain.mjs chestDist(): roll = U(0,1)/divisor, nested thresholds.
@@ -385,12 +296,45 @@ function chestDistFor(rareChest, arrowhead) {
   return cum.map((c,r) => c - (cum[r+1] ?? 0));
 }
 
+/* levers — the top artifact-find sources, friendly names instead of derivation notes */
+const TERM_LABELS = {
+  fauxory: "Fauxory Tusk (t6 × sailing lv)", captain: "Best AF captain",
+  shinyPets: "Shiny pets", arcade: "Arcade upgrades", tier6Captains: "Tier-6 captains owned",
+  bribe: "Bribe", tuneOfArtifaction: "Tune of Artifaction", sticker: "Sticker + research grid",
+  vault: "Upgrade Vault", gridTranscendent: "Transcendent grid node",
+};
+function renderLevers(af) {
+  if (!af || !af.collapsed) return;
+  const r = af.collapsed;
+  const terms = (r.terms || [])
+    .map(t => ({ v: t.id === "captain" ? (t.parts?.[0]?.value || 0) : t.value,
+                 kind: t.kind, label: TERM_LABELS[t.id] || t.id }))
+    .filter(t => t.kind === "add" && t.v > 0)
+    .sort((a, b) => b.v - a.v)
+    .slice(0, 7);
+  if (!terms.length) return;
+  const max = terms[0].v;
+  const fmtMulti = (v) => v >= 1e6 ? (v/1e6).toFixed(2)+"M×" : Math.round(v).toLocaleString()+"×";
+  $("leversPanel").style.display = "";
+  $("leversPanel").innerHTML = `
+    <h2>Your levers <span class="hint">top artifact-find sources · % added to the pool</span></h2>
+    <div class="levers">
+      ${terms.map(t => `<div class="lever"><div class="lname">${t.label}</div><div class="lbar"><div class="lfill" style="width:${(t.v/max*100).toFixed(1)}%"></div></div><div class="lval">+${int(t.v)}%</div></div>`).join("")}
+    </div>
+    <p class="lnote">Additive pool ${int(r.additivePoolPct)}% · multiplicative stack ${fmtMulti(r.multiplicative)} —
+      full recipe in <a href="stats.html?recipe=artifactFind">Stats → Artifact Find</a>.</p>`;
+}
+
 (async () => {
   try {
     const r = await (await fetch("/api/state")).json();
     if (!r.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
     SNAP = r.snapshot; render();
   } catch (e) { $("err").textContent = "Failed to load /api/state: " + e.message; }
+  try {
+    const j = await (await fetch("/api/stats")).json();
+    if (j.ok && j.stats) renderLevers(j.stats.artifactFind);
+  } catch (e) { /* levers are progressive enhancement — the page works without them */ }
 })();
 </script>
 </body>

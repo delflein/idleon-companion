@@ -20,7 +20,9 @@ function writeDerived(db, id, e, metrics) {
   for (const [k, v] of Object.entries(metrics)) if (typeof v === "number" && isFinite(v)) mIns.run(id, k, v);
 
   const eIns = db.prepare("INSERT INTO entities (snapshot_id, entity, json) VALUES (?,?,?)");
-  for (const [name, val] of Object.entries(e)) eIns.run(id, name, JSON.stringify(val));
+  /* e.stats is ~170KB of evaluated terms per snapshot and is never read back — /api/stats
+   * re-evaluates fresh from the stored raw, and its history lives in the metrics rows. */
+  for (const [name, val] of Object.entries(e)) if (name !== "stats") eIns.run(id, name, JSON.stringify(val));
 
   const aIns = db.prepare("INSERT INTO achievement_state (snapshot_id, ach_i, done, progress) VALUES (?,?,?,?)");
   for (const a of e.achievements) aIns.run(id, a.i, a.done ? 1 : 0, a.progress);
@@ -54,6 +56,16 @@ export function openDb(path) {
       value REAL NOT NULL,
       PRIMARY KEY (snapshot_id, key)
     );
+    /* Every sync appends here (intra-day resolution); snapshots stay one-per-day. This table is
+     * NEVER rewritten by rebuildDerived — a metric added later backfills daily from the raw
+     * anchors (via metrics) and gains intra-day points only from its birth onward. */
+    CREATE TABLE IF NOT EXISTS metrics_live (
+      ts TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value REAL NOT NULL,
+      PRIMARY KEY (ts, key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mlive_key ON metrics_live(key, ts);
     CREATE TABLE IF NOT EXISTS entities (
       snapshot_id INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
       entity TEXT NOT NULL,             -- 'characters' | 'achievements' | 'artifacts' | ...
@@ -119,6 +131,10 @@ export function ingest(db, raw, { ts = new Date().toISOString(), source = "sync"
     id = Number(r.lastInsertRowid);
   }
   writeDerived(db, id, e, metrics);
+
+  const lIns = db.prepare("INSERT OR REPLACE INTO metrics_live (ts, key, value) VALUES (?,?,?)");
+  for (const [k, v] of Object.entries(metrics)) if (typeof v === "number" && isFinite(v)) lIns.run(ts, k, v);
+
   return { id, ts, metrics, entities: e };
 }
 
@@ -150,12 +166,22 @@ export function rawOf(db, id) {
 }
 
 export function history(db, keys = null, from = null) {
-  let sql = `SELECT s.ts, m.key, m.value FROM metrics m JOIN snapshots s ON s.id=m.snapshot_id`;
-  const where = [], args = [];
-  if (keys) { where.push(`m.key IN (${keys.map(() => "?").join(",")})`); args.push(...keys); }
-  if (from) { where.push("s.ts >= ?"); args.push(from); }
-  if (where.length) sql += " WHERE " + where.join(" AND ");
-  sql += " ORDER BY s.ts";
+  /* Union of the two layers. Snapshot metrics: daily, rebuildable over all history. Live
+   * metrics: every sync, from the metric's birth onward. The day's final sync exists in both
+   * with the SAME ts (ingest stamps the snapshot with the sync ts) — GROUP BY ts,key dedupes
+   * it; MAX() is arbitrary between two equal values. */
+  const keyFilter = keys ? ` AND key IN (${keys.map(() => "?").join(",")})` : "";
+  const fromFilter = from ? " AND ts >= ?" : "";
+  const args = [];
+  const part = () => { if (keys) args.push(...keys); if (from) args.push(from); };
+  part(); part();
+  const sql = `
+    SELECT ts, key, MAX(value) AS value FROM (
+      SELECT s.ts AS ts, m.key AS key, m.value AS value
+        FROM metrics m JOIN snapshots s ON s.id=m.snapshot_id WHERE 1=1${keyFilter}${fromFilter}
+      UNION ALL
+      SELECT ts, key, value FROM metrics_live WHERE 1=1${keyFilter}${fromFilter}
+    ) GROUP BY ts, key ORDER BY ts`;
   const out = {};
   for (const r of db.prepare(sql).all(...args)) (out[r.key] ??= []).push({ ts: r.ts, v: r.value });
   return out;

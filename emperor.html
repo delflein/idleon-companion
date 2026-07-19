@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emperor — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  /* Shared with w1-w5.html / summoning.html / sneaking.html — the generic recipe-breakdown
+   * renderer's own look. */
+  td { vertical-align: top; white-space: normal; }
+  tr.expander { cursor: pointer; }
+  tr.expander:hover td { background: var(--glow); }
+  tr.parts td { border-bottom: none; padding-top: 0; }
+  .partrow { color: var(--ink-2); font-size: 12px; padding-left: 18px; border-left: 2px solid var(--grid); margin: 1px 0; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .expr { color: var(--ink-muted); font-size: 10.5px; white-space: normal; font-weight: 400; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  .lowerbound { border-left: 3px solid var(--warning); background: rgba(250, 178, 25, .06); padding: 6px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  ul.unknowns { margin: 4px 0 0 18px; color: var(--ink-2); font-size: 12.5px; }
+  ul.unknowns li { margin-bottom: 3px; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  tr.dim td { opacity: .6; }
+  .rewardladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .rewardladder span { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .rewardladder span.next { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/data/Boss6.png" alt="" width="26" height="26">The Emperor</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="ladderPanel" style="display:none"></section>
+<section class="panel" id="bonusesPanel" style="display:none"></section>
+<div id="rmod_emperorBonus"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, DATA = null, SERIES = {};
+let EMP = null;   // SNAP.entities.w6.emperor shortcut
+let SHOWALL = {};
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+const chip = (status) => status === "computed" ? "" :
+  `<span class="chip ${status === "partial" ? "soon" : status === "user-supplied" ? "user" : status === "per-char" ? "pc" : "dead"}">${status}</span>`;
+
+function spark(key) {
+  const pts = SERIES[key];
+  if (!pts || pts.length < 2) return "";
+  const w = 72, h = 18;
+  const vs = pts.map((p) => p.v);
+  const min = Math.min(...vs), max = Math.max(...vs);
+  const y = (v) => max === min ? h / 2 : h - 2 - (v - min) / (max - min) * (h - 4);
+  const step = w / (pts.length - 1);
+  const d = vs.map((v, i) => `${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const up = vs[vs.length - 1] > vs[0];
+  return `<svg class="spark" width="${w}" height="${h}"><polyline points="${d}" fill="none"
+    stroke="${up ? "var(--good)" : "var(--ink-muted)"}" stroke-width="1.5"/></svg>`;
+}
+
+const ATTEMPTS_TOOLTIP = "OptionsListAccount[370] is a signed DEBT counter, not a plain remaining-count: every attempt (win or lose) adds +1 to it; each day it's decreased by your Daily Tries (floor-clamped at -MaxAttemptStack so unused attempts don't bank forever), plus a 50% chance of +1 extra from the Emperor Season Pass. Attempts left today = max(0, round(1 - [370])). Shown here as the plain 'attempts left' number — no raw debt value, no timer.";
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const e = EMP;
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Boss6", 28, "data")}<div class="label">Showdown wins</div><div class="value">${fmt(e.showdownWins)}</div><div class="sub">current boss HP ${fmt(e.currentShowdownHp)}</div></div>
+    <div class="tile"><div class="label">Attempts left today</div><div class="value">${fmt(e.attempts.left)}</div><div class="sub">of up to ${fmt(e.attempts.maxDisplayed)} banked <span class="tip" title="${ATTEMPTS_TOOLTIP}">ⓘ</span></div></div>
+    <div class="tile"><div class="label">Daily tries</div><div class="value">${fmt(e.attempts.dailyTries)}</div><div class="sub">base replenish per day</div></div>
+    <div class="tile">${UI.sprite("jade_coin", 28, "etc")}<div class="label">Emperor Season Pass</div><div class="value">${e.attempts.seasonPass ? "owned" : "not owned"}</div><div class="sub">50% chance of +1 extra daily attempt</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Next-6-showdowns HP preview — static ladder, Boss6HP = 135e12 * 1.52^n, no timer (just the
+ * curve you're walking toward).
+ * ============================================================================================ */
+function renderLadder() {
+  const e = EMP;
+  $("ladderPanel").style.display = "";
+  $("ladderPanel").innerHTML = `
+    <h2>${UI.sprite("Boss6", 20, "data")} Next Showdowns <span class="hint">Boss HP scales ×1.52 per win — this previews the next 6, the same curve the game itself shows.</span></h2>
+    <div class="rewardladder">${e.nextShowdowns.map((s, i) => `<span class="${i === 0 ? "next" : ""}">#${s.n}: ${fmt(s.hp)} HP</span>`).join("")}</div>
+  `;
+}
+
+/* ============================================================================================
+ * 12 bonus categories table (accumulated per showdown win, 48-slot cycle) — full breakdown via
+ * the emperorBonus recipe embed below.
+ * ============================================================================================ */
+function bonusRowHtml(b) {
+  return `<tr>
+    <td><b>${b.name}</b></td>
+    <td style="text-align:right">${fmt(b.value)}</td>
+    <td>${b.wired ? `<span class="chip live">modeled elsewhere</span>` : `<span class="chip soon">value only</span>`}</td>
+    <td class="note">${b.feeds}</td>
+  </tr>`;
+}
+
+function renderBonuses() {
+  const e = EMP;
+  $("bonusesPanel").style.display = "";
+  $("bonusesPanel").innerHTML = `
+    <h2>${UI.sprite("Boss6", 20, "data")} Emperor Bonuses <span class="hint">12 categories, each accumulated across a 48-slot cycle as you win more showdowns.
+      <span class="tip" title="'Modeled elsewhere' = this companion's own recipes already fold that category into another stat (e.g. Ninja Stealth, Summoning Winner Bonuses, Drop Rate). 'Value only' categories are real in-game bonuses this page can't yet trace into a downstream recipe.">ⓘ</span></span></h2>
+    <div class="scroll"><table><tr><th>Category</th><th style="text-align:right">Value</th><th>Status</th><th>Feeds</th></tr>${e.bonuses.map(bonusRowHtml).join("")}</table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Generic recipe-breakdown renderer for emperorBonus (points format, 12 fixed terms).
+ * ============================================================================================ */
+const RECIPE_MODULES = [
+  { name: "emperorBonus", title: "Emperor Bonuses (12 categories)", icon: ["Boss6", "data"],
+    blurb: "Same 12 categories as the table above, shown as a term-by-term recipe with history." },
+];
+
+function bucketTerms(r) {
+  const bracket = 1 + r.additivePoolPct / 100;
+  const eqMult = (t) => t.kind === "add"
+    ? (100 + r.additivePoolPct) / Math.max(1, 100 + r.additivePoolPct - (t.value || 0))
+    : t.kind === "mul" ? (t.value || 1)
+    : (bracket + (t.value || 0)) / bracket;
+  const isNeutral = (t) => (t.kind === "add" && t.value === 0) || (t.kind === "mul" && t.value === 1);
+  const locked = r.terms.filter((t) => isNeutral(t) && t.status !== "unknown" && t.status !== "per-char");
+  const lockedSet = new Set(locked);
+  const rest = r.terms.filter((t) => !lockedSet.has(t)).sort((a, b) => eqMult(b) - eqMult(a));
+  return { rest, locked, eqMult };
+}
+
+function termRow(cfg, t, disp, eqMult, isPoints) {
+  const d = disp[t.id] || {};
+  const label = d.label || t.key;
+  const rawVal = t.kind === "add" ? "+" + fmt(t.value) + (isPoints ? " pts" : "%")
+    : t.kind === "mul" ? "×" + fmt(t.value)
+    : fmt(t.value);
+  const eq = eqMult(t);
+  const shownVal = isPoints ? rawVal
+    : t.kind === "mul" ? "×" + fmt(eq)
+    : `×${eq >= 1.1 ? eq.toFixed(2) : eq.toFixed(3)}<div class="expr">${rawVal} of pool</div>`;
+  const key = `stat.${cfg.name}.${t.id}`;
+  const parts = t.parts || [];
+  return `<tr class="expander" data-mod="${cfg.name}" data-term="${t.id}">
+      <td style="max-width:340px"><b>${label}</b> ${parts.length ? '<span class="expr">▸</span>' : ""}
+        ${d.where ? `<div class="where">${d.where}</div>` : ""}</td>
+      <td style="text-align:right">${shownVal}</td>
+      <td>${chip(t.status)}</td>
+      <td>${spark(key)}</td>
+      <td class="note">${d.how || t.note || ""}</td>
+    </tr>
+    ${parts.length ? `<tr class="parts" data-parts="${cfg.name}_${t.id}" style="display:none"><td colspan="5">
+      ${parts.map((p) => `<div class="partrow">${p.label}: <b>${p.valueText ?? fmt(p.value)}</b> ${p.note ? `<span class="expr">${p.note}</span>` : ""}</div>`).join("")}
+    </td></tr>` : ""}`;
+}
+
+function pendingModuleHTML(cfg) {
+  return `<section class="panel pending" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title}<span class="pill-pending">recipe pending</span></h2>
+    <p class="note">${cfg.blurb} This recipe hasn't been registered in <code>stats/index.mjs</code> yet.</p>
+  </section>`;
+}
+
+function liveModuleHTML(cfg, st) {
+  const r = st.collapsed;
+  const isPoints = st.format === "points";
+  const disp = st.display || {};
+  const { rest, locked, eqMult } = bucketTerms(r);
+  const unknownCount = r.unknown.length;
+  const showAll = !!SHOWALL[cfg.name];
+  const rows = showAll ? rest : rest.slice(0, 12);
+
+  const valueText = (r.lowerBound ? "≥ " : "") + fmt(r.value) + (isPoints ? " pts" : "x");
+
+  return `<section class="panel" id="mod_${cfg.name}">
+    <h2>${UI.sprite(cfg.icon[0], 20, cfg.icon[1])} ${cfg.title} <span class="hint">${cfg.blurb}</span></h2>
+    <div class="cards" style="margin-bottom:10px">
+      <div class="tile">${UI.sprite(cfg.icon[0], 28, cfg.icon[1])}<div class="label">${cfg.title}</div><div class="value">${valueText}</div></div>
+      <div class="tile"><div class="label">Coverage</div><div class="value">${r.terms.length - unknownCount}<span class="of">/${r.terms.length}</span></div>
+        <div class="sub">sources computed</div></div>
+    </div>
+    <div class="scroll"><table>
+      <tr><th>Category</th><th style="text-align:right">Effect</th><th>Status</th><th>History</th><th>How it works</th></tr>
+      ${rows.map((t) => termRow(cfg, t, disp, eqMult, isPoints)).join("")}
+    </table></div>
+    ${rest.length > 12 ? `<button class="showmore" data-mod="${cfg.name}">${showAll ? "show fewer" : `show ${rest.length - 12} more`}</button>` : ""}
+    ${unknownCount ? `<details class="fold" style="margin-top:6px"><summary>${unknownCount} source${unknownCount > 1 ? "s" : ""} not derivable yet</summary>
+      <ul class="unknowns">${r.unknown.map((u) => `<li>${u}</li>`).join("")}</ul>
+    </details>` : ""}
+  </section>`;
+}
+
+function renderRecipeModules() {
+  for (const cfg of RECIPE_MODULES) {
+    const host = $("rmod_" + cfg.name);
+    if (!host) continue;
+    const st = DATA?.stats?.[cfg.name];
+    host.innerHTML = st ? liveModuleHTML(cfg, st) : pendingModuleHTML(cfg);
+  }
+  wireModuleEvents();
+}
+
+function wireModuleEvents() {
+  document.querySelectorAll(".showmore[data-mod]").forEach((btn) => btn.addEventListener("click", (e) => {
+    const m = e.target.dataset.mod;
+    SHOWALL[m] = !SHOWALL[m];
+    renderRecipeModules();
+  }));
+  document.querySelectorAll("tr.expander[data-mod]").forEach((tr) => tr.addEventListener("click", () => {
+    const p = document.querySelector(`tr[data-parts="${tr.dataset.mod}_${tr.dataset.term}"]`);
+    if (p) p.style.display = p.style.display === "none" ? "" : "none";
+  }));
+}
+
+async function loadHistory() {
+  const keys = [];
+  for (const cfg of RECIPE_MODULES) {
+    const st = DATA?.stats?.[cfg.name];
+    if (!st) continue;
+    keys.push(`stat.${cfg.name}`);
+    for (const t of st.collapsed.terms) if (t.status !== "unknown") keys.push(`stat.${cfg.name}.${t.id}`);
+  }
+  if (!keys.length) return;
+  try {
+    const res = await fetch(`/api/history?keys=${keys.join(",")}`);
+    SERIES = (await res.json()).series || {};
+  } catch { SERIES = {}; }
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w6) {
+      $("err").innerHTML = `No <code>w6</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    EMP = SNAP.entities.w6.emperor;
+
+    const statsRes = await fetch("/api/stats");
+    const statsJson = await statsRes.json();
+    DATA = statsJson.ok && statsJson.stats ? statsJson : null;
+    if (!DATA) $("err").textContent = "No snapshot with a stored raw save yet — Sync first to unlock the recipe breakdown below.";
+
+    renderTiles();
+    renderLadder();
+    renderBonuses();
+    renderRecipeModules();
+    await loadHistory();
+    renderRecipeModules();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>

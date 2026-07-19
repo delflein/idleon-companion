@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spelunking — IdleOn Companion</title>
+<link rel="stylesheet" href="companion.css">
+<script src="ui.js"></script>
+<style>
+  td { vertical-align: top; white-space: normal; }
+  .note { color: var(--ink-2); white-space: normal; max-width: 560px; font-size: 12px; }
+  .where { color: var(--accent); font-size: 11.5px; margin-top: 1px; font-weight: 600; }
+  .showmore { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; font-weight: 650; padding: 6px 0; }
+  details.fold > summary { cursor: pointer; color: var(--accent); font-weight: 650; font-size: 13px; padding: 4px 0; }
+  .tip { cursor: help; color: var(--accent); font-weight: 700; border-bottom: 1px dotted var(--accent); }
+  .subhead { font-size: 13px; margin: 4px 0 8px; }
+  .rewardladder { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .rewardladder span { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
+  .rewardladder span.got { border-color: rgba(12,163,12,.5); color: var(--good); }
+  .gapbox { border: 1px dashed var(--border); border-radius: 10px; padding: 12px 14px; color: var(--ink-2); font-size: 12.5px; }
+  .gapbox h3 { font-size: 13px; color: var(--ink-1); margin-bottom: 6px; }
+  .chapterlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+  .chaptercard { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 11.5px; color: var(--ink-2); }
+  .chaptercard b { display: block; color: var(--ink-1); font-size: 12px; margin-bottom: 4px; }
+  .chaptercard div { margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<header class="app">
+  <h1><img class="px" src="/idleon-toolbox/public/etc/Spelunking.png" alt="" width="26" height="26">Spelunking</h1>
+  <nav class="pages"></nav>
+  <span class="spacer"></span>
+  <span class="meta" id="meta"></span>
+  <span id="uiOptions"></span>
+</header>
+
+<div id="err" class="err"></div>
+<div id="caveat" class="caveat">W7's Spelunking is an ACTIVE minigame (Tunnels) — there is no time-candy AFK path for it. This page shows LEVELS and PROGRESS only; it never shows a live timer or "time until X" countdown, by design (see companion product rules).</div>
+<div class="cards" id="tiles"></div>
+
+<section class="panel" id="cavesPanel" style="display:none"></section>
+<section class="panel" id="shopPanel" style="display:none"></section>
+<section class="panel" id="lorePanel" style="display:none"></section>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SNAP = null, GLOSS = null;
+let S = null;   // SNAP.entities.w7.spelunking shortcut
+let SHOWALL = false;
+
+const fmt = (n) => {
+  if (n == null || !isFinite(n)) return "—";
+  const a = Math.abs(n);
+  if (a >= 1e15) return n.toExponential(2).replace("e+", "e");
+  if (a >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (a >= 1e4) return Math.round(n).toLocaleString();
+  return +n.toFixed(2) + "";
+};
+
+/* ============================================================================================
+ * Top KPI strip.
+ * ============================================================================================ */
+function renderTiles() {
+  const totalPow = S.caves.reduce((a, c) => a + c.pow, 0);
+  $("tiles").innerHTML = `
+    <div class="tile">${UI.sprite("Spelunking", 28, "etc")}<div class="label">Caves unlocked</div><div class="value">${S.cavesUnlocked}<span class="of">/${S.caves.length}</span></div><div class="sub">Pebble Cove through Scoutpost</div></div>
+    <div class="tile"><div class="label">Shop upgrades bought</div><div class="value">${S.shopBought}<span class="of">/${S.shopLevels.length}</span></div><div class="sub">at least 1 level in</div></div>
+    <div class="tile"><div class="label">Discoveries</div><div class="value">${fmt(S.discoveries)}</div><div class="sub">multiplies POW upgrade 1's bonus</div></div>
+    <div class="tile"><div class="label">Total POW across caves</div><div class="value">${fmt(totalPow)}</div><div class="sub">per-cave "Caver POW" sum</div></div>
+  `;
+}
+
+/* ============================================================================================
+ * Caves table.
+ * ============================================================================================ */
+function caveRowHtml(c, i) {
+  const depthPct = c.maxDepth ? Math.round(100 * c.depth / c.maxDepth) : 0;
+  return `<tr>
+    <td><b>${c.name ?? `Cave ${i + 1}`}</b></td>
+    <td>${c.unlocked ? '<span class="chip live">unlocked</span>' : '<span class="chip dead">locked</span>'}</td>
+    <td style="text-align:right">${fmt(c.depth)}<span class="of">/${c.maxDepth}</span> <span class="note">(${depthPct}%)</span></td>
+    <td style="text-align:right">${fmt(c.pow)}</td>
+  </tr>`;
+}
+function renderCaves() {
+  $("cavesPanel").style.display = "";
+  $("cavesPanel").innerHTML = `
+    <h2>${UI.sprite("Spelunking", 20, "etc")} Caves &amp; Depth <span class="hint">9 caves, each with its own max depth and Caver POW requirement to descend further.</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Cave</th><th>Status</th><th style="text-align:right">Best depth</th><th style="text-align:right">Caver POW</th></tr>
+      ${S.caves.map(caveRowHtml).join("")}
+    </table></div>
+  `;
+}
+
+/* ============================================================================================
+ * Shop table — 53 rows, capped + show-more, desc tooltip from glossary.
+ * ============================================================================================ */
+function shopRowHtml(r, desc) {
+  return `<tr>
+    <td><b>${r.name}</b>${desc ? `<div class="where">${desc}</div>` : ""}</td>
+    <td style="text-align:right">${r.level}<span class="of">/${r.maxLv >= 99999 ? "∞" : r.maxLv}</span></td>
+  </tr>`;
+}
+function renderShop() {
+  const descOf = Object.fromEntries((GLOSS?.spelunkShop ?? []).map((s) => [s.id, s.desc]));
+  const bought = S.shopLevels.filter((r) => r.level > 0).sort((a, b) => b.level - a.level);
+  const untouched = S.shopLevels.filter((r) => r.level === 0);
+  const ordered = bought.concat(untouched);
+  const rows = SHOWALL ? ordered : ordered.slice(0, 10);
+  $("shopPanel").style.display = "";
+  $("shopPanel").innerHTML = `
+    <h2 class="subhead">Shop upgrades <span class="of">${S.shopBought}/${S.shopLevels.length} bought</span></h2>
+    <div class="scroll"><table>
+      <tr><th>Upgrade</th><th style="text-align:right">Level</th></tr>
+      ${rows.map((r) => shopRowHtml(r, descOf[r.id])).join("")}
+    </table></div>
+    ${ordered.length > 10 ? `<button class="showmore" id="shopShowMore">${SHOWALL ? "show fewer" : `show ${ordered.length - 10} more`}</button>` : ""}
+  `;
+  const more = $("shopShowMore");
+  if (more) more.onclick = () => { SHOWALL = !SHOWALL; renderShop(); };
+}
+
+/* ============================================================================================
+ * Lore chapters — flavor reference only (chapter/page-read progress isn't in the save mapping
+ * yet, Spelunk[8] is an undocumented savemap gap; see stats/w7-report.mjs). No progress shown,
+ * no fabricated numbers.
+ * ============================================================================================ */
+function renderLore() {
+  if (!GLOSS?.spelunkChapters?.length) { $("lorePanel").style.display = "none"; return; }
+  $("lorePanel").style.display = "";
+  $("lorePanel").innerHTML = `
+    <h2 class="subhead">Lore chapters <span class="hint">Reading pages in each Tunnel's Lore book unlocks these bonuses. Reference only — per-chapter page-read progress isn't wired into the save mapping yet (see gap notes below), so no live progress is shown here.
+      <span class="tip" title="ChapterBonus(chapter,slot) scales off Spelunk[8][4*chapter+slot], a save index not yet documented in savemap/w67.mjs. Rather than guess, this section only lists what each chapter CAN grant.">ⓘ</span></span></h2>
+    <div class="chapterlist">
+      ${GLOSS.spelunkChapters.map((c) => `<div class="chaptercard"><b>Chapter ${c.chapter + 1}</b>${c.rows.map((r) => `<div>${r.name}</div>`).join("")}</div>`).join("")}
+    </div>
+    <div class="gapbox" style="margin-top:12px">
+      <h3>Deferred: live lore progress</h3>
+      <p>Adding Spelunk[8] (per-chapter pages-read) to savemap/w67.mjs would let this section show real progress + the ChapterBonus value instead of just the reference list above — a clean follow-up pass, not fabricated here.</p>
+    </div>
+  `;
+}
+
+/* ============================================================================================
+ * Boot.
+ * ============================================================================================ */
+async function boot() {
+  try {
+    const stateRes = await fetch("/api/state");
+    const state = await stateRes.json();
+    if (!state.snapshot) { $("err").textContent = "No snapshot yet — Sync on the dashboard first."; return; }
+    SNAP = state.snapshot;
+    $("meta").textContent = new Date(SNAP.ts).toLocaleString();
+    if (!SNAP.entities?.w7) {
+      $("err").innerHTML = `No <code>w7</code> entity on this snapshot — run <b>POST /api/rebuild</b>, then reload.`;
+      return;
+    }
+    S = SNAP.entities.w7.spelunking;
+
+    const glossRes = await fetch("/api/w7");
+    const glossJson = await glossRes.json().catch(() => null);
+    GLOSS = glossJson?.ok ? glossJson : null;
+
+    renderTiles();
+    renderCaves();
+    renderShop();
+    renderLore();
+  } catch (e) { $("err").textContent = "Server error: " + e.message + " — is the companion server running?"; }
+}
+boot();
+</script>
+</body>
+</html>
