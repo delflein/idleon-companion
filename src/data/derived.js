@@ -59,11 +59,12 @@ export function deriveMetrics(entities) {
  * `/api/stats`'s `stats` map: every registered recipe evaluated fresh from the save, per-character
  * where the recipe is active-char-sensitive. Mirrors companion.mjs's GET /api/stats handler EXACTLY
  * — same activeChar (artifactSourceChar), same `?villager=N` arg passthrough (only villager-exp.mjs
- * reads ctx.args.villager; every other recipe ignores it), same manual-input opts spread.
+ * reads ctx.args.villager; every other recipe ignores it), same opts spread.
  *
  * @param {object} save openSave(raw, charNames)
  * @param {object} [opts] { villager?, tomePoints?, labConnectedIds?, activeVote? } —
- *   the manual stat inputs (appState.statOpts()) plus the optional villager Explorer index.
+ *   the optional villager Explorer index plus the engine's pin-able evaluate() opts (no UI feeds
+ *   the latter since the manual-inputs removal — the seam stays for tests/tools).
  *   `villager` is stripped out and turned into ctx.args (companion's url.searchParams "villager");
  *   everything else is spread into evaluate opts verbatim.
  * @returns {object|null} { [recipeName]: { name, label, format, display, byChar, collapsed, sensitive } }
@@ -87,7 +88,7 @@ export function deriveStats(save, { villager = null, ...statOpts } = {}) {
  * the wall clock (farmingReport's default `nowMs = Date.now()`), never from the save's age.
  *
  * @param {object} save openSave(raw, charNames)
- * @param {object} [opts] the manual stat inputs (appState.statOpts())
+ * @param {object} [opts] extra evaluate() opts (unused by the app since the manual-inputs removal)
  * @param {number} [nowMs] wall clock for the exotic-week calc; defaults inside farmingReport
  */
 export function deriveFarming(save, opts = {}, nowMs = Date.now()) {

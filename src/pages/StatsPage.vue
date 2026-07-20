@@ -4,9 +4,8 @@
  * evaluated recipe map — the exact shape the legacy /api/stats returned, one entry per registered
  * recipe. The Explorer is a recipe picker driving StatModule.vue (THE shared recipe-breakdown
  * renderer, which already carries the per-character selector, per-term drill-down, sparkline
- * history, and the honesty-contract "lower bound" caveat), plus the manual-inputs editor that
- * pins the values the save can't supply (statInputs / setStatInput from appState — the same
- * settings-backed path DataPage.vue uses; editing one re-evaluates `stats` reactively).
+ * history, and the honesty-contract "lower bound" caveat). Manual override inputs were removed
+ * 2026-07-20 — Tome/lab/vote are all auto-derived now (see appState.js's note).
  *
  * DELIBERATE SCOPE (stated, per the migration brief): the legacy page's dev-only "internals"
  * toggle, its additive-pool / multiplier-chain split tiles, and its per-character comparison bar
@@ -16,7 +15,7 @@
  */
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
-import { state, stats, statInputs, setStatInput, useHistory } from "../data/appState.js";
+import { state, stats, useHistory } from "../data/appState.js";
 import StatModule from "../ui/StatModule.vue";
 import SpriteIcon from "../ui/SpriteIcon.vue";
 
@@ -45,17 +44,6 @@ const historyKeys = computed(() => {
   return keys;
 });
 const { series } = useHistory(() => historyKeys.value);
-
-/* Manual overrides — all auto-derived from the save now; filling one pins it (blank = honestly
- * unknown, never guessed). setStatInput persists + the `stats` computed re-evaluates. */
-const INPUTS = [
-  { key: "statTomePoints", label: "Tome score", placeholder: "auto: computed floor",
-    why: "Computed from the save as a floor. Enter the exact PTS from the Tome page to pin it." },
-  { key: "statLabConnected", label: "Lab nodes connected", placeholder: "auto: board solver",
-    why: "The board solver proves connections from the save. Filling this wins outright." },
-  { key: "statActiveVote", label: "Active vote", placeholder: "auto: read at sync",
-    why: "Read from server vars at sync. 20 = artifact find, 27 = drop rate." },
-];
 </script>
 
 <template>
@@ -92,31 +80,6 @@ const INPUTS = [
           {{ r.label }}
         </option>
       </select>
-    </section>
-
-    <section class="panel">
-      <h2>
-        Overrides
-        <span class="hint">all auto-derived from the save — fill only to pin an exact value; stored until cleared</span>
-      </h2>
-      <div class="inputs">
-        <div
-          v-for="inp in INPUTS"
-          :key="inp.key"
-          class="field"
-        >
-          <label>{{ inp.label }}</label>
-          <input
-            :value="statInputs[inp.key]"
-            type="text"
-            :placeholder="inp.placeholder"
-            @change="setStatInput(inp.key, $event.target.value)"
-          >
-          <div class="why">
-            {{ inp.why }}
-          </div>
-        </div>
-      </div>
     </section>
 
     <StatModule

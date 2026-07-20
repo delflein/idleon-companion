@@ -5,7 +5,7 @@
  */
 import { ref, reactive, onMounted, onUnmounted, computed } from "vue";
 import { getAuth, connect, steamLoginUrl } from "../data/sync.js";
-import { state, lastSync, init, syncNow, statInputs, setStatInput } from "../data/appState.js";
+import { state, lastSync, init, syncNow } from "../data/appState.js";
 import { snapshotStats, getSetting, setSetting } from "../data/db.js";
 import { rebuildInWorker } from "../data/workerClient.js";
 import { importFile, exportFile } from "../data/importExport.js";
@@ -338,40 +338,6 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- Manual stat inputs (blank = honestly unknown, never guessed) -->
-    <div class="card">
-      <h3>Manual stat inputs</h3>
-      <p class="muted">
-        Values the save can't supply. Leave blank to keep the dependent stats honestly unknown.
-      </p>
-      <label class="field">
-        Tome points
-        <input
-          :value="statInputs.statTomePoints"
-          type="text"
-          placeholder="e.g. 44931"
-          @change="setStatInput('statTomePoints', $event.target.value)"
-        >
-      </label>
-      <label class="field">
-        Lab-connected char ids
-        <input
-          :value="statInputs.statLabConnected"
-          type="text"
-          placeholder="comma-separated, e.g. 0,2,5"
-          @change="setStatInput('statLabConnected', $event.target.value)"
-        >
-      </label>
-      <label class="field">
-        Active vote id
-        <input
-          :value="statInputs.statActiveVote"
-          type="text"
-          placeholder="e.g. 12"
-          @change="setStatInput('statActiveVote', $event.target.value)"
-        >
-      </label>
-    </div>
   </section>
 </template>
 

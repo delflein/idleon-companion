@@ -9,11 +9,11 @@
  *
  * `stats.villagerExp` (appState's default `stats` computed) only ever evaluates villager 0 (the
  * Explorer) — companion.mjs's old `/api/stats?villager=N` re-evaluation is replaced here by calling
- * `deriveStats(save, { villager, ...statOpts() })` directly per the migration brief's Cavern
- * villager-breakdown rule, instead of the appState `stats` computed.
+ * `deriveStats(save, { villager })` directly per the migration brief's Cavern villager-breakdown
+ * rule, instead of the appState `stats` computed.
  */
 import { computed, ref } from "vue";
-import { state, entities, statOpts, useHistory } from "../data/appState.js";
+import { state, entities, useHistory } from "../data/appState.js";
 import { deriveStats, w5Glossary } from "../data/derived.js";
 import StatModule from "../ui/StatModule.vue";
 import SpriteIcon from "../ui/SpriteIcon.vue";
@@ -36,7 +36,7 @@ const villagerSel = ref(0); // 0 = Explorer, matching legacy VILLAGER_SEL defaul
 
 const villagerStat = computed(() => {
   if (!state.value) return null;
-  return deriveStats(state.value.save, { villager: villagerSel.value, ...statOpts() })?.villagerExp ?? null;
+  return deriveStats(state.value.save, { villager: villagerSel.value })?.villagerExp ?? null;
 });
 
 const selectedVillagerName = computed(

@@ -7,14 +7,10 @@
  * State shape (docs/ARCHITECTURE.md D1: parse once, derive many — one save object, markRaw'd so Vue
  * never deep-proxies ~800 KB of save data):
  *   { snapshotId, ts, charNames, raw, save }   where `save` is openSave(raw, charNames).
- *
- * Manual stat inputs (tomePoints / labConnectedIds / activeVote) live in the settings store and
- * feed every stat evaluation — the exact statInputs()/statOpts() contract ported from
- * companion.mjs: blank string = null = honestly unknown, NEVER guessed (README honesty rule).
  */
-import { shallowRef, markRaw, reactive, computed, ref, watchEffect } from "vue";
+import { shallowRef, markRaw, computed, ref, watchEffect } from "vue";
 import { openSave } from "../core/savemap.mjs";
-import { db, latestSnapshot, getRaw, getSetting, setSetting } from "./db.js";
+import { db, latestSnapshot, getRaw } from "./db.js";
 import { ingest, history } from "./ingest.js";
 import { ingestInWorker, workerAvailable } from "./workerClient.js";
 import { fetchSave } from "./sync.js";
@@ -51,7 +47,6 @@ export async function init() {
   if (!raw) return; // legacy metric-only snapshot with no raw — nothing to parse
   setState(raw, snap.charNames ?? null, snap.id, snap.ts);
   lastSync.value = { ts: snap.ts, source: snap.source };
-  await loadStatInputs();
 }
 
 /**
@@ -69,49 +64,17 @@ export async function syncNow(source = "manual") {
   return result;
 }
 
-/* ---------- manual stat inputs (settings-backed; keys shared with companion.mjs's SQLite era so
- * an imported idleon.db carries them straight over) ---------- */
-
-const STAT_KEYS = ["statTomePoints", "statLabConnected", "statActiveVote"];
-
-/** Raw values as stored (strings; "" = not set) — bound directly by the Data page inputs. */
-export const statInputs = reactive({ statTomePoints: "", statLabConnected: "", statActiveVote: "" });
-
-async function loadStatInputs() {
-  for (const k of STAT_KEYS) statInputs[k] = (await getSetting(k, "")) ?? "";
-}
-
-/** Persist one manual input. Empty string clears it back to "unknown". */
-export async function setStatInput(key, value) {
-  if (!STAT_KEYS.includes(key)) throw new Error(`unknown stat input: ${key}`);
-  const v = String(value ?? "").trim();
-  statInputs[key] = v;
-  await setSetting(key, v);
-}
-
-/**
- * Parse the manual inputs into evaluate() opts — companion.mjs's statOpts() verbatim in behaviour.
- * Blank stays null so the engine reports the dependent term unknown rather than fabricating a value.
- * Reads the reactive `statInputs`, so the derived computeds below track it and re-evaluate when the
- * user edits an input.
- */
-export function statOpts() {
-  const t = statInputs.statTomePoints;
-  const lab = statInputs.statLabConnected;
-  const vote = statInputs.statActiveVote;
-  return {
-    tomePoints: t !== "" && isFinite(Number(t)) ? Number(t) : null,
-    labConnectedIds: lab !== "" ? lab.split(",").map((x) => Number(x.trim())).filter(Number.isFinite) : null,
-    activeVote: vote !== "" && isFinite(Number(vote)) ? Number(vote) : null,
-  };
-}
+/* Manual stat inputs (tomePoints / labConnectedIds / activeVote) were REMOVED 2026-07-20: every
+ * one of them is auto-derived now — the Tome score is computed natively (stats/tome.mjs, as a
+ * floor), lab connectivity comes from the board solver, and the active vote arrives in
+ * __serverVars on every sync. The engine's opts seam still exists (evaluate() accepts them), so
+ * a pinning UI could return — but with no UI feeding them, affected terms simply follow the
+ * honesty contract: derived where provable, unknown/lower-bound where not. */
 
 /* ---------- derived computeds (docs/ARCHITECTURE.md D1: parse once, derive many) ----------
  * The single seam where the framework-free derivation layer (derived.js, mirrors the old REST
- * endpoints) meets Vue reactivity. Each is a lazy, cached computed() over the current save +
- * statOpts() — a page reads these INSTEAD of the fetch('/api/X') it used against the old server.
- * `stats`/`farming` track statInputs (via statOpts()), so editing a manual input re-evaluates
- * exactly the panels that depend on it, nothing else. */
+ * endpoints) meets Vue reactivity. Each is a lazy, cached computed() over the current save —
+ * a page reads these INSTEAD of the fetch('/api/X') it used against the old server. */
 
 /** `/api/state` snapshot.entities — the per-system entity tree (numbers pages render). */
 export const entities = computed(() => (state.value ? deriveEntities(state.value.raw, state.value.charNames) : null));
@@ -119,13 +82,12 @@ export const entities = computed(() => (state.value ? deriveEntities(state.value
 /** `/api/state` snapshot.metrics — the flat {key:number} map (derived off `entities`, not re-parsed). */
 export const metrics = computed(() => (entities.value ? deriveMetrics(entities.value) : null));
 
-/** `/api/stats` .stats — every recipe evaluated per-char, with the manual inputs applied. Default
- * (Explorer) villager; a page needing a specific villager's breakdown calls derived.deriveStats
- * directly with { villager, ...statOpts() }. */
-export const stats = computed(() => (state.value ? deriveStats(state.value.save, statOpts()) : null));
+/** `/api/stats` .stats — every recipe evaluated per-char. Default (Explorer) villager; a page
+ * needing a specific villager's breakdown calls derived.deriveStats directly with { villager }. */
+export const stats = computed(() => (state.value ? deriveStats(state.value.save) : null));
 
 /** `/api/farming` .report — the four-module farming report. */
-export const farming = computed(() => (state.value ? deriveFarming(state.value.save, statOpts()) : null));
+export const farming = computed(() => (state.value ? deriveFarming(state.value.save) : null));
 
 /* ---------- history (charts) ----------
  * The time-series stays in Dexie (ingest.js's history()); pages that chart a metric call this to
