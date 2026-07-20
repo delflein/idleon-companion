@@ -337,7 +337,6 @@ onUnmounted(() => {
         Request persistent storage
       </button>
     </div>
-
   </section>
 </template>
 
