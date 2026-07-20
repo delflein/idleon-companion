@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 /* companion.mjs — IdleOn Companion local server.
  *
+ * DEPRECATED (2026-07-20, docs/ARCHITECTURE.md D8): the SPA/PWA replaces this server
+ * entirely — sync, storage, and every page now run client-side (src/). Kept only until
+ * the SQLite history in idleon.db is exported (scripts/export-sqlite.mjs) and imported
+ * into the PWA's Data page; then delete this file with db.mjs, fetch-idleon.mjs and
+ * the legacy root pages — the ready-made command is in README "Legacy".
+ *
  *   node companion.mjs            → http://localhost:8317
  *   (or double-click start-companion.command on macOS)
  *
