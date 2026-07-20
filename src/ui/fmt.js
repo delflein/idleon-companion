@@ -67,3 +67,17 @@ export function fmtTermRaw(term, isPoints) {
   if (term.kind === "mul") return "×" + fmt(term.value);
   return fmt(term.value);
 }
+
+/**
+ * niceItem — display-clean a game item/critter codename ("Bug_Ladybug2" → "Bug Ladybug 2").
+ * Duplicated across ~6 legacy pages (survey-pages.md "secondary duplicated helpers"); this is
+ * the one shared home. Underscores → spaces, camelCase and letter-digit boundaries split.
+ * @param {string} s
+ */
+export function niceItem(s) {
+  return String(s ?? "")
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
+    .trim();
+}

@@ -12,7 +12,7 @@
  * feed every stat evaluation — the exact statInputs()/statOpts() contract ported from
  * companion.mjs: blank string = null = honestly unknown, NEVER guessed (README honesty rule).
  */
-import { shallowRef, markRaw, reactive, computed, ref } from "vue";
+import { shallowRef, markRaw, reactive, computed, ref, watchEffect } from "vue";
 import { openSave } from "../core/savemap.mjs";
 import { db, latestSnapshot, getRaw, getSetting, setSetting } from "./db.js";
 import { ingest, history } from "./ingest.js";
@@ -34,6 +34,13 @@ function setState(raw, charNames, snapshotId, ts) {
     raw: markRaw(raw),
     save: markRaw(openSave(raw, charNames)),
   };
+}
+
+// TEST-ONLY SEAM (test/pages.test.js): seeds `state` synchronously the same way init() would,
+// without touching Dexie. Lets the page-mount harness get real entities/stats/farming computeds
+// from a fixture raw save without spinning up IndexedDB reads. Not called by any app code path.
+export function _seedForTest(raw, charNames = null, { snapshotId = 0, ts = new Date().toISOString() } = {}) {
+  setState(raw, charNames, snapshotId, ts);
 }
 
 /** Load the latest snapshot from Dexie on boot (no network). Null-safe: fresh installs stay empty. */
@@ -125,21 +132,34 @@ export const farming = computed(() => (state.value ? deriveFarming(state.value.s
  * async-load {key:[{ts,v}]} into a ref. Reload after a sync/rebuild via the returned reload().
  */
 /**
- * @param {string[]|null} keys metric keys to load (null = all — the rare full-scan path)
+ * @param {string[]|null|(() => string[]|null)} keys metric keys to load (null = all — the rare
+ *   full-scan path). Pass a GETTER for keys derived from reactive state — the load re-runs when
+ *   the getter's result changes.
  * @param {string|null} [from] inclusive ISO lower bound
  * @returns {{ series: import('vue').Ref<object>, loading: import('vue').Ref<boolean>, reload: () => Promise<void> }}
  */
 export function useHistory(keys, from = null) {
   const series = ref({});
   const loading = ref(false);
+  const resolveKeys = typeof keys === "function" ? keys : () => keys;
   async function reload() {
     loading.value = true;
     try {
-      series.value = await history(db, keys, from);
+      series.value = await history(db, resolveKeys(), from);
     } finally {
       loading.value = false;
     }
   }
-  reload();
+  /* Re-load when the key set changes (getter form) or when a sync/rebuild lands a new snapshot —
+   * without this, a page mounted before the first-ever sync would keep an empty history for the
+   * whole visit (pilot-batch finding). watchEffect tracks resolveKeys()'s reactive deps plus
+   * state's snapshot identity; the JSON key makes "same keys, new array" a no-op. */
+  let lastTrigger = null;
+  watchEffect(() => {
+    const trigger = JSON.stringify([resolveKeys(), state.value?.snapshotId ?? null, state.value?.ts ?? null]);
+    if (trigger === lastTrigger) return;
+    lastTrigger = trigger;
+    reload();
+  });
   return { series, loading, reload };
 }

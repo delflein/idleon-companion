@@ -27,7 +27,10 @@ const legacyHref = computed(() => {
 </script>
 
 <template>
-  <section class="pending">
+  <section
+    class="pending"
+    data-pending
+  >
     <header class="pending-head">
       <SpriteIcon
         v-if="icon"

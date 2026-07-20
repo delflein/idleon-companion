@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "node --test 'test/**/*.test.js'",
-    "test:ui": "node --test src/ui/fmt.test.js"
+    "test:ui": "node --test src/ui/fmt.test.js",
+    "test:pages": "node --test test/pages.test.js"
   },
   "dependencies": {
     "dexie": "^4.4.4",
@@ -22,10 +23,12 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.4.11",
     "eslint": "^10.7.0",
     "eslint-plugin-vue": "^10.9.2",
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.7.0",
+    "happy-dom": "^20.11.0",
     "vite": "^8.1.5",
     "vite-plugin-pwa": "^1.3.0"
   }
