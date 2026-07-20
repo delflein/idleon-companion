@@ -11,10 +11,10 @@
  *   - all standalone sync plumbing (IdleonSync server + browser/Firebase modes, the Steam-SSO
  *     connect modal, auto-refresh polling, `⬇ save` download) and the drag-drop savegame.json
  *     loader: GONE. The Data page (/data) owns connect + sync + import/export.
- *   - the daily/weekly localStorage checklist: OUT OF SCOPE for the dashboard rewrite (it was a
- *     manual to-do tracker, not save-derived data) — not ported.
  *   - the bespoke hover-crosshair SVG `renderHistory()` line chart: replaced by the shared
  *     TimeChart (uPlot, D6) driven by a metric-key picker, keeping the legacy metric-selection UX.
+ * (The daily/weekly checklist was initially dropped, then restored below — same localStorage keys
+ * as the legacy page, so checked-off state carries over.)
  *
  * WHAT WAS PORTED:
  *   - buildAdvice() → src/core/dashboard-advice.mjs (pure, framework-free), rendered here as the
@@ -149,6 +149,48 @@ const chartSeries = computed(() => {
   return { [activeKey.value]: pts.map((p) => ({ ts: Date.parse(p.ts), v: p.v })) };
 });
 const chartLabels = computed(() => ({ [activeKey.value]: LABEL_OF[activeKey.value] ?? activeKey.value }));
+
+/* ---- Daily/weekly checklist (legacy dashboard.html DAILY/WEEKLY + renderChecklist, ported
+ * verbatim). Manual to-do state, keyed per day ("d<ISO date>:<id>") / per week ("w<year>-<week>:
+ * <id>") in localStorage — the SAME keys the legacy page used, so state checked off there today
+ * carries over. Notes read from entities/metrics where the legacy note functions did. */
+const DAILY = [
+  { id: "emp", t: "Emperor attempt(s)", auto: true, n: () => `${e.value?.emperor?.attemptsBanked ?? 0} banked at last sync · showdown ${e.value?.emperor?.showdown ?? "—"}` },
+  { id: "summon", t: "Summoning daily battles", n: () => "win streak attempts + endless push" },
+  { id: "research", t: "Research: roll dice + assign studies", n: () => "keep all magnifying-glass slots busy" },
+  { id: "spelunk", t: "Spelunking dive", n: () => "no time candy works in W7 — active time" },
+  { id: "engines", t: "Engine rotation: Dust / Bones / Tachyons", n: () => "one active block each on WW, DB, AC maps" },
+  { id: "opals", t: "Caverns: spend opals + bank monument hours", n: () => "" },
+  { id: "farm", t: "Farming: harvest + Sticker/market attempts", n: () => "" },
+  { id: "arcade", t: "Arcade: claim balls", n: () => "gold ball shop = 1200-pt Tome line" },
+  { id: "sushi", t: "Sushi Station rotation", n: () => "" },
+];
+const WEEKLY = [
+  { id: "button", t: "Press The Button", n: () => "weekly multiplicative bonus — check requirements panel" },
+  { id: "weeklyboss", t: "Weekly Battles", n: () => "" },
+  { id: "cavpush", t: "Cavern depth push", n: () => "deepest cavern + Gambit attempt" },
+  { id: "dream", t: "Finish ≥ 1 Equinox dream", n: () => `${e.value?.equinox?.dreamsDone ?? "—"}/${e.value?.equinox?.dreamTotal ?? "—"} done` },
+  { id: "review", t: "Tome & account review", n: () => "sync fresh, then compare history" },
+];
+const dayKey = () => "d" + new Date().toISOString().slice(0, 10);
+const weekKey = () => { const d = new Date(), y = d.getFullYear(), on = new Date(y, 0, 1); return "w" + y + "-" + Math.ceil(((d - on) / 864e5 + on.getDay() + 1) / 7); };
+const chkTab = ref("daily");
+const chkVersion = ref(0); // bump to re-read localStorage after a toggle
+const chkStore = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage blocked — session-only */ } } };
+const chkItems = computed(() => {
+  void chkVersion.value;
+  const items = chkTab.value === "daily" ? DAILY : WEEKLY;
+  const key = chkTab.value === "daily" ? dayKey() : weekKey();
+  return items.map((it) => ({ ...it, note: it.n(), done: chkStore.get(key + ":" + it.id) === "1" }));
+});
+const chkDate = computed(() => chkTab.value === "daily"
+  ? new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })
+  : "resets weekly");
+function toggleChk(id) {
+  const key = (chkTab.value === "daily" ? dayKey() : weekKey()) + ":" + id;
+  chkStore.set(key, chkStore.get(key) === "1" ? "0" : "1");
+  chkVersion.value++;
+}
 </script>
 
 <template>
@@ -346,6 +388,52 @@ const chartLabels = computed(() => ({ [activeKey.value]: LABEL_OF[activeKey.valu
               </div>
             </div>
           </section>
+
+          <!-- Daily / weekly checklist (legacy dashboard checklist, same localStorage keys) -->
+          <section class="panel">
+            <h2>
+              Checklist
+              <span class="hint">{{ chkDate }}</span>
+              <span class="spacer" />
+              <button
+                class="chktab"
+                :class="{ active: chkTab === 'daily' }"
+                @click="chkTab = 'daily'"
+              >
+                daily
+              </button>
+              <button
+                class="chktab"
+                :class="{ active: chkTab === 'weekly' }"
+                @click="chkTab = 'weekly'"
+              >
+                weekly
+              </button>
+            </h2>
+            <ul class="check">
+              <li
+                v-for="it in chkItems"
+                :key="it.id"
+                :class="{ done: it.done }"
+                @click="toggleChk(it.id)"
+              >
+                <div class="box">
+                  {{ it.done ? "✓" : "" }}
+                </div>
+                <div class="txt">
+                  <b>{{ it.t }}</b>
+                  <span
+                    v-if="it.auto"
+                    class="autotag"
+                  >from save</span>
+                  <span
+                    v-if="it.note"
+                    class="note"
+                  >{{ it.note }}</span>
+                </div>
+              </li>
+            </ul>
+          </section>
         </div>
 
         <!-- More focus targets: advice ranks 4+ -->
@@ -463,6 +551,20 @@ const chartLabels = computed(() => ({ [activeKey.value]: LABEL_OF[activeKey.valu
 </template>
 
 <style scoped>
+/* Checklist — ported verbatim from companion.css ul.check/.autotag + the legacy tab buttons */
+ul.check { list-style: none; padding: 0; margin: 0; }
+ul.check li { display: flex; gap: 10px; align-items: flex-start; padding: 7px 4px; border-top: 1px solid var(--grid, #262a35); cursor: pointer; }
+ul.check li:first-child { border-top: none; }
+ul.check .box { width: 18px; height: 18px; flex: none; margin-top: 1px; border: 2px solid var(--baseline, #3a4054); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--accent-ink, #e6e8ee); }
+ul.check li.done .box { background: var(--good, #7ad19c); border-color: var(--good, #7ad19c); color: #fff; }
+ul.check li.done .txt { color: var(--ink-muted, #9aa4b8); text-decoration: line-through; }
+ul.check .txt b { font-weight: 700; }
+ul.check .txt .note { display: block; color: var(--ink-muted, #9aa4b8); font-size: 12px; }
+.autotag { font-size: 10.5px; border: 1px solid var(--border, #2c3140); color: var(--ink-muted, #9aa4b8); border-radius: 5px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+.chktab { padding: 2px 10px; background: transparent; color: var(--ink-muted, #9aa4b8); border: 1px solid var(--border, #2c3140); border-radius: 6px; cursor: pointer; font-size: 12px; }
+.chktab.active { color: var(--accent-ink, #e6e8ee); border-color: var(--baseline, #3a4054); background: var(--panel-2, #1a1d26); }
+.chktab + .chktab { margin-left: 4px; }
+
 .page { display: flex; flex-direction: column; gap: var(--gap); }
 .app .meta { color: var(--ink-muted); font-size: 12px; margin-left: auto; }
 
