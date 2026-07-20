@@ -39,6 +39,16 @@ function close() {
       </RouterLink>
 
       <nav class="app-nav">
+        <!-- Data (sync/connect/import) gets a permanent slot in the bar — burying the app's only
+             way to load a save inside the Pages dropdown left fresh installs with no visible
+             entry point. -->
+        <RouterLink
+          class="nav-toggle nav-data"
+          to="/data"
+          @click="close"
+        >
+          Data
+        </RouterLink>
         <button
           class="nav-toggle"
           :aria-expanded="open"
@@ -140,6 +150,16 @@ img.px {
   padding: 0.35rem 0.75rem;
   font-size: 0.9rem;
   cursor: pointer;
+}
+
+.nav-data {
+  text-decoration: none;
+  margin-right: 0.4rem;
+  display: inline-block;
+}
+
+.nav-data.router-link-active {
+  border-color: #4c7dd4;
 }
 
 .nav-toggle:hover {

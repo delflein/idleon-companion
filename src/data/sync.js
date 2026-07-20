@@ -123,6 +123,23 @@ function decodeJwtPayload(idToken) {
 /* ---------- individual network steps — exported so the CORS spike page can time and report
  * each one separately; the composed functions below are what real features should call. ---------- */
 
+/**
+ * The Steam OpenID sign-in URL (ported from legacy sync.js). Open this in a new tab: the user
+ * logs in on Steam, Steam redirects to legendsofidleon.com/steamsso/?openid… — and THAT full
+ * address-bar URL is what gets pasted back into connect(). The assertion in it is single-use
+ * and short-lived, hence the copy-paste dance instead of a stored link.
+ */
+export function steamLoginUrl() {
+  return "https://steamcommunity.com/openid/login?" + new URLSearchParams({
+    "openid.ns": "http://specs.openid.net/auth/2.0",
+    "openid.mode": "checkid_setup",
+    "openid.claimed_id": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.identity": "http://specs.openid.net/auth/2.0/identifier_select",
+    "openid.return_to": STEAM_RETURN,
+    "openid.realm": STEAM_RETURN,
+  });
+}
+
 /** Step 1/6 — exchange the pasted steamsso redirect URL for a Firebase custom token. */
 export async function steamExchange(redirectUrl) {
   if (!redirectUrl?.startsWith(STEAM_RETURN)) throw new Error("Paste the full legendsofidleon.com/steamsso/… URL");

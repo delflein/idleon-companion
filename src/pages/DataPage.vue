@@ -4,7 +4,7 @@
  * and the iOS-eviction storage controls (D5). Talks only to src/data/* — no core/UI reach-in.
  */
 import { ref, reactive, onMounted, onUnmounted, computed } from "vue";
-import { getAuth, connect } from "../data/sync.js";
+import { getAuth, connect, steamLoginUrl } from "../data/sync.js";
 import { state, lastSync, init, syncNow, statInputs, setStatInput } from "../data/appState.js";
 import { snapshotStats, getSetting, setSetting } from "../data/db.js";
 import { rebuildInWorker } from "../data/workerClient.js";
@@ -195,17 +195,38 @@ onUnmounted(() => {
       {{ errorMsg }}
     </p>
 
-    <!-- Connect -->
+    <!-- Connect (the legacy dashboard connect-modal flow: sign in on Steam, copy the redirect
+         URL you land on, paste it back — the OpenID assertion is single-use, so this cannot be
+         a plain one-click login) -->
     <div class="card">
       <h3>Connection</h3>
-      <p class="muted">
-        {{ connectedUid ? `Connected — uid ${connectedUid}` : "Not connected. Paste the steamsso redirect URL." }}
+      <p
+        v-if="connectedUid"
+        class="muted"
+      >
+        Connected — uid {{ connectedUid }}
       </p>
+      <ol
+        v-else
+        class="connect-steps"
+      >
+        <li>
+          <a
+            class="steambtn"
+            :href="steamLoginUrl()"
+            target="_blank"
+            rel="noopener"
+          >Sign in through Steam ↗</a> — log in on the page that opens.
+        </li>
+        <li>You'll land on <b>legendsofidleon.com/steamsso/…</b> — copy the <b>full URL</b> from the address bar.</li>
+        <li>Paste it here and hit Connect:</li>
+      </ol>
       <div class="row">
         <input
           v-model="url"
           type="text"
-          placeholder="https://www.legendsofidleon.com/steamsso/…"
+          placeholder="https://www.legendsofidleon.com/steamsso/?openid…"
+          spellcheck="false"
           class="grow"
         >
         <button
@@ -355,6 +376,13 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.connect-steps { margin: 0 0 10px; padding-left: 20px; color: var(--ink-muted, #9aa4b8); font-size: 13px; }
+.connect-steps li { margin: 4px 0; }
+.steambtn {
+  display: inline-block; padding: 5px 12px; border-radius: 7px; font-weight: 700; font-size: 13px;
+  background: var(--series-1, #4c7dd4); color: #fff; text-decoration: none;
+}
+
 .data-page {
   max-width: 720px;
 }
